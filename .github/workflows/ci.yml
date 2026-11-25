@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Actions are pinned to the exact commits of their tags, so a moved tag can't change what runs here.
+# Each action is pinned to the commit behind its version tag, so a moved tag can't change what runs here.
 jobs:
   sdk:
     runs-on: ubuntu-latest
@@ -51,8 +51,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @maxxing/wallet-frame test
-      # The same build wallet.maxxing.ad deploys: production cluster, no VITE_* settings. The file hashes are printed so a
-      # deployment can be compared with them (docs/SELF-CUSTODY.md, "Rebuild and compare").
+      # Built the way wallet.maxxing.ad is deployed: production settings, no VITE_* variables. The file hashes printed below
+      # let anyone compare a deployment with this commit (docs/SELF-CUSTODY.md, "How to check it yourself").
       - name: Build as deployed
         run: |
           if env | grep -q '^VITE_'; then echo "VITE_* settings must not be set for this build"; exit 1; fi

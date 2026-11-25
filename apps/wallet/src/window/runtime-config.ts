@@ -1,7 +1,7 @@
 /**
- * Admin-managed values the wallet window reads (docs/54): the public settings from GET /v1/config, so they change without a
- * rebuild. Only display values come from here (today the website address behind "Open MAXXING"); nothing that decides what the
- * wallet trusts or signs: app origins, the API address and the security policy stay in the build.
+ * Public display settings the wallet window reads from GET /v1/config, so MAXXING can change them without a rebuild. Only display
+ * values come from here (today, the website address behind "Open MAXXING"). Nothing that decides what the wallet trusts or signs
+ * comes from here: app origins, the API address and the security policy stay in the build.
  */
 import { DEFAULT_WEBSITE, websiteLink } from "@maxxing/wallet-core/app-links";
 
@@ -19,8 +19,8 @@ export function loadRuntimeConfig(apiUrl: string, send: typeof fetch = globalThi
 }
 
 /**
- * The MAXXING website: Settings → Apps → "Website address" (`links.website`, https only). A development build keeps its local site;
- * otherwise the build's VITE_PUBLIC_WEB_URL (or https://maxxing.ad) until the admin value has loaded.
+ * The MAXXING website address (`links.website`, https only). A development build keeps its local site; otherwise the build's
+ * VITE_PUBLIC_WEB_URL (or https://maxxing.ad) is used until the setting has loaded.
  */
 export function websiteUrl(env: { DEV?: boolean; VITE_PUBLIC_WEB_URL?: string } = import.meta.env ?? {}): string {
   const built = String(env.VITE_PUBLIC_WEB_URL || (env.DEV ? "http://localhost:5173" : DEFAULT_WEBSITE)).replace(/\/$/, "");

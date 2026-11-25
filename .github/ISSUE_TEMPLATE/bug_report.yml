@@ -1,0 +1,52 @@
+name: Bug report
+description: Something in the SDK or the wallet window doesn't work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. If it could put someone's funds or keys at risk, don't file it here: follow [SECURITY.md](https://github.com/maxxingdotad/maxxing-wallet/blob/main/SECURITY.md) instead.
+
+        Never paste a recovery phrase, private key, PIN, app secret or webhook secret into an issue.
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part?
+      options:
+        - "@maxxing/wallet-sdk"
+        - Wallet window (wallet.maxxing.ad)
+        - Wallet core
+        - Documentation
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: SDK version
+      description: From your package.json or the script URL. Leave empty if this is about the wallet window only.
+      placeholder: 0.2.2
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and operating system
+      placeholder: Chrome 131 on macOS 15
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead. Include error codes and console messages.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smallest code or the exact steps that show the problem.
+      placeholder: |
+        1. Create the wallet with createMaxxingWallet({ appId, chains: [8453] })
+        2. Call wallet.connect() from a click
+        3. ...
+    validations:
+      required: true

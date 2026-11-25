@@ -63,7 +63,7 @@ function renderAppsPage() {
   const activeId = vault.activePlatformWalletId();
   if (!activeId) {
     const open = h("a", { className: "button", href: websiteUrl(), target: "_blank", rel: "noopener" }, "Open MAXXING");
-    // Admin's website address: fetched only here, never in a connect or signing window.
+    // The website address setting: fetched only here, never in a connect or signing window.
     void loadRuntimeConfig(API_URL).then(() => { open.href = websiteUrl(); });
     show(h("main", {}, h("h1", {}, "Connected apps"), message("There's no MAXXING wallet on this device."), open));
     return;

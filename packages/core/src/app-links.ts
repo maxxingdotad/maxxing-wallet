@@ -1,8 +1,7 @@
 /**
- * The one rule for the links admin sets in Settings → Apps (docs/reference/SETTINGS.md): the website, the Support address and the
- * status page. The settings registry validates with the same patterns, and every app (web, admin, developer portal, wallet window,
- * mobile) reads the saved value through these helpers, so what admin accepts is exactly what the apps show. It lives here so the
- * public wallet builds on its own; the monorepo's packages/domain re-exports it. No imports.
+ * The one rule for MAXXING's public links: the website, the support address and the status page. MAXXING's settings are checked
+ * with these same patterns when they are saved, and every MAXXING app reads the saved values through these helpers, so a link is
+ * shown only if it is a valid https page or email address. No imports, so the wallet builds on its own.
  */
 export const DEFAULT_WEBSITE = "https://maxxing.ad";
 export const DEFAULT_SUPPORT = "support@maxxing.ad";

@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/maxxingdotad/maxxing-wallet/blob/main/SECURITY.md
+    about: Please don't open a public issue. Email support@maxxing.ad as described in SECURITY.md.
+  - name: SDK documentation
+    url: https://developers.maxxing.ad/docs
+    about: Guides, live examples and the API reference.
+  - name: Help with your wallet or account
+    url: mailto:support@maxxing.ad
+    about: For help with your own wallet, email support. Never share your recovery phrase, private key or PIN with anyone.

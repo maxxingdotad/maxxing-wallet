@@ -1,10 +1,13 @@
 # Changelog
 
-`@maxxing/wallet-sdk` follows semantic versioning. Before 1.0, a minor version (0.x.0) may change an API; a patch (0.x.y) never does.
-Every change ships as a new version: the script-tag builds at `https://developers.maxxing.ad/sdk/<version>/` never change once
-published, and stay online. `https://developers.maxxing.ad/sdk/v0/` is always the newest 0.x build, including chain registry
-updates (new networks) that haven't been pinned yet; release those as a patch version (0.x.y) so pinned users can take them.
-Policy: https://developers.maxxing.ad/versioning
+`@maxxing/wallet-sdk` follows semantic versioning. Before 1.0, a minor version (0.x.0) may change an API; a patch (0.x.y) never
+does.
+
+Every change ships as a new version. The script-tag build at `https://developers.maxxing.ad/sdk/<version>/` never changes once
+published, and stays online. `https://developers.maxxing.ad/sdk/v0/` always serves the newest 0.x build, and may include new
+networks before they reach a numbered release; each such update is then released as a patch, so pinned versions can take it.
+
+Versioning policy: https://developers.maxxing.ad/versioning
 
 ## 0.2.2 (2026-11-25)
 

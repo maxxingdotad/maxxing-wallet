@@ -578,14 +578,19 @@ await post("/auth/verify", { nonce, signature });
 - **Small, pinned dependencies.** The package depends on six exact-version libraries (`@noble/curves`, `@noble/hashes`, `bs58` and
   the Wallet Standard types) and runs no install scripts.
 
-Found a vulnerability? Email [support@maxxing.ad](mailto:support@maxxing.ad) with "Security" in the subject. Please don't post it
-publicly first.
+Found a vulnerability? Email [support@maxxing.ad](mailto:support@maxxing.ad) with "Security" in the subject, and please don't
+post it publicly first. The [security policy](https://github.com/maxxingdotad/maxxing-wallet/blob/main/SECURITY.md) has the
+details.
 
 ## Open source
 
-The SDK's source is public at [github.com/maxxingdotad/maxxing-wallet](https://github.com/maxxingdotad/maxxing-wallet). Every
-release is built and published there with npm provenance, so the npm page links the exact commit and run that built it. Check the
-package you installed with `npm audit signatures`.
+This SDK is open source under the MIT License, at
+[github.com/maxxingdotad/maxxing-wallet](https://github.com/maxxingdotad/maxxing-wallet). The same repository holds the source of
+the wallet itself (source-available), and
+[Self-custody](https://github.com/maxxingdotad/maxxing-wallet/blob/main/docs/SELF-CUSTODY.md) explains how users' keys are kept.
+
+Every release is built and published from that repository with npm provenance, so the npm page links the exact commit and
+workflow run that built it. To check the package you installed, run `npm audit signatures`.
 
 ## Versioning
 

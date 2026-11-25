@@ -1,0 +1,15 @@
+name: Question or docs mismatch
+description: Ask how something works, or point out where the code and the docs disagree.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Never paste a recovery phrase, private key, PIN, app secret or webhook secret into an issue.
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: If the code and the docs disagree, link both (file and line, or the docs section).
+    validations:
+      required: true

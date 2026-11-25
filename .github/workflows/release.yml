@@ -1,5 +1,5 @@
-# Publishes @maxxing/wallet-sdk to npm from this repository, with provenance: the npm page links the commit and the run that
-# built it. Start a release by pushing a tag named after the version, e.g. `git tag sdk-v0.2.2 && git push origin sdk-v0.2.2`.
+# Publishes @maxxing/wallet-sdk to npm from this repository with provenance, so the npm page links the commit and the run that
+# built it. A release starts when a tag named after the version is pushed, for example sdk-v0.2.2.
 # npm trusts this workflow through Trusted Publishing (OpenID Connect), so no npm token is stored anywhere.
 name: Release SDK
 
@@ -16,7 +16,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm
     steps:
-      # Pinned to the exact commits of their tags, so a moved tag can't change what builds a release.
+      # Each action is pinned to the commit behind its version tag, so a moved tag can't change what builds a release.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0

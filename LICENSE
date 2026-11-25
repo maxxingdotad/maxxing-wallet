@@ -6,11 +6,11 @@ Each folder is licensed by the LICENSE file inside it. There is no license for t
   packages/core    Business Source License 1.1          packages/core/LICENSE
   apps/wallet      Business Source License 1.1          apps/wallet/LICENSE
 
-The Business Source License 1.1 folders are source-available: anyone may read, review, build and test them, including to verify
+The Business Source License 1.1 folders are source-available. Anyone may read, review, build and test them, including to verify
 MAXXING's releases, but may not run them in production as their own wallet or service. Each version becomes available under
-GPL-3.0-or-later four years after its first public release. The MIT SDK does not include or import any of them.
+GPL-3.0-or-later four years after its first public release. The MIT SDK does not include or import either of them.
 
-Files outside these folders (the README, SECURITY.md, TRADEMARKS.md, docs/ and the build and workflow configuration) are
-Copyright (c) 2026 MAXXING and may be copied and adapted with attribution.
+All other files in this repository (the documentation in the root and in docs/, the .github folder, and the build and workspace
+configuration) are Copyright (c) 2026 MAXXING and may be copied and adapted with attribution.
 
 "MAXXING" and the MAXXING logo are trademarks and are not licensed by any of the above. See TRADEMARKS.md.
