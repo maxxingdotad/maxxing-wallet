@@ -67,6 +67,163 @@ test("phishing: MAXXING's own sites pass; listed hosts are known scams; names th
   assert.deepEqual([...parseList(JSON.stringify({ deny: ["Evil.Example.", "*.wild.example", "nodot"] }))], ["evil.example", "wild.example"]);
 });
 
+test("RPC: an endpoint's own failure moves on to the next, with retries; the chain's answer is final; the good endpoint goes first", async () => {
+  const { rpc, RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS];
+  RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const real = globalThis.fetch;
+  const calls: string[] = [];
+  let script: Record<string, () => Response> = {};
+  globalThis.fetch = (async (input: string | URL) => { const url = String(input); calls.push(url); return (script[url] ?? (() => new Response("", { status: 503 })))(); }) as typeof fetch;
+  const ok = (result: unknown) => () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  const err = (code: number, message: string, status = 200) => () => new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code, message } }), { status });
+  try {
+    // Rate limit (JSON error), "method not available" (HTTP 400), then an answer.
+    script = { "https://a": err(-32005, "Rate limit exceeded"), "https://b": err(-32601, "the method eth_blockNumber does not exist", 400), "https://c": ok("0x10") };
+    assert.equal(await rpc(["https://a", "https://b", "https://c"], "eth_blockNumber"), "0x10");
+    // The endpoint that answered is tried first next time.
+    calls.length = 0;
+    assert.equal(await rpc(["https://a", "https://b", "https://c"], "eth_blockNumber"), "0x10");
+    assert.deepEqual(calls, ["https://c"]);
+    // A revert is the chain's answer: no other endpoint is asked.
+    calls.length = 0;
+    script = { "https://x": err(3, "execution reverted"), "https://y": ok("0x1") };
+    await assert.rejects(rpc(["https://x", "https://y"], "eth_call"), /reverted/);
+    assert.deepEqual(calls, ["https://x"]);
+    // Every endpoint down: three rounds, then an error.
+    calls.length = 0;
+    script = {};
+    await assert.rejects(rpc(["https://d1", "https://d2"], "eth_blockNumber"));
+    assert.equal(calls.length, 6);
+    // A transaction is never sent again in a later round.
+    calls.length = 0;
+    await assert.rejects(rpc(["https://d1", "https://d2"], "eth_sendRawTransaction", ["0x"]));
+    assert.equal(calls.length, 2);
+
+    // Sending: the id comes from the signed bytes, so a send that may have gone through is waited for, never failed or redone.
+    const { sendSigned } = await import("../src/lib/rpc");
+    const send = (urls: string[]) => sendSigned(urls, "eth_sendRawTransaction", ["0xsigned"], "0xhash");
+    // A times out or fails with 5xx (it may have taken it); B then says "already known" or "nonce too low": probably sent.
+    script = { "https://down": () => new Response("", { status: 502 }), "https://known": err(-32000, "already known"), "https://nonce": err(-32000, "nonce too low") };
+    assert.deepEqual(await send(["https://down", "https://nonce"]), { id: "0xhash", certain: false });
+    assert.deepEqual(await send(["https://down", "https://known"]), { id: "0xhash", certain: true });
+    // "already known" on its own: the network has it.
+    assert.deepEqual(await send(["https://known"]), { id: "0xhash", certain: true });
+    // "nonce too low" when nothing could have taken it: a real refusal (another transaction used the nonce).
+    await assert.rejects(send(["https://nonce"]), /nonce too low/);
+    // A rate limit (429) refuses before taking it, so a later "nonce too low" is still a real refusal.
+    script["https://limited"] = () => new Response("", { status: 429 });
+    await assert.rejects(send(["https://limited", "https://nonce"]), /nonce too low/);
+    // Every endpoint failed after one may have taken it: the id comes back, marked uncertain, for the receipt to settle.
+    assert.deepEqual(await send(["https://down", "https://down2"]), { id: "0xhash", certain: false });
+    // A plain refusal from the chain is final.
+    script["https://broke"] = err(-32000, "insufficient funds for gas * price + value");
+    await assert.rejects(send(["https://broke", "https://known"]), /insufficient funds/);
+    // A clean answer.
+    script["https://fine"] = ok("0xhash");
+    assert.deepEqual(await send(["https://fine"]), { id: "0xhash", certain: true });
+    // (B) Only timeouts, dropped connections and 5xx may have taken it. 400/401/403 and pages that aren't JSON refused it, so a
+    // later "nonce too low" is a real refusal, and if nothing else answers, it's an error (not "probably sent").
+    for (const refusal of [() => new Response("bad request", { status: 400 }), () => new Response("", { status: 401 }), () => new Response("<html>forbidden</html>", { status: 403 }), () => new Response("<html>gateway</html>", { status: 200 })]) {
+      script["https://refused"] = refusal;
+      await assert.rejects(send(["https://refused", "https://nonce"]), /nonce too low/);
+      await assert.rejects(send(["https://refused"]));
+    }
+    script["https://5xx-json"] = err(-32603, "internal error", 503);
+    assert.deepEqual(await send(["https://5xx-json", "https://nonce"]), { id: "0xhash", certain: false }, "a 5xx with an error body may still have taken it");
+    script["https://hang"] = () => { throw new TypeError("network error"); };
+    assert.deepEqual(await send(["https://hang", "https://nonce"]), { id: "0xhash", certain: false }, "a dropped connection may have taken it");
+    // After a possible take, any nonce / replacement / underpriced answer may be this same transaction: not confirmed yet, never
+    // a failure. Before any possible take, they are refusals.
+    script["https://underpriced"] = err(-32000, "replacement transaction underpriced");
+    script["https://nonce-high"] = err(-32000, "nonce too high");
+    for (const answer of ["https://underpriced", "https://nonce", "https://nonce-high"]) {
+      assert.deepEqual(await send(["https://down", answer]), { id: "0xhash", certain: false }, answer);
+      await assert.rejects(send([answer]), /./, `${answer} alone is a refusal`);
+    }
+    // 408 (request timeout) and 499 (client closed) may have taken it, like 5xx.
+    for (const status of [408, 499]) {
+      script[`https://s${status}`] = () => new Response("", { status });
+      assert.deepEqual(await send([`https://s${status}`, "https://nonce"]), { id: "0xhash", certain: false }, String(status));
+    }
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});
+
+test("after a send, the chain says where it stands: confirmed, failed, seen, or unknown (the Send screen shows 'Sent' only when known)", async () => {
+  const { sendStatus } = await import("../src/lib/send");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const all = networks(true), base = all.find(n => n.networkId === "eip155:8453")!, sol = all.find(n => n.networkId === "solana:mainnet")!;
+  const real = globalThis.fetch;
+  let answers: Record<string, unknown> = {};
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { method } = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: answers[method] ?? null }));
+  }) as typeof fetch;
+  try {
+    answers = { eth_getTransactionReceipt: { status: "0x1" } };
+    assert.equal(await sendStatus(base, "0xh"), "confirmed");
+    answers = { eth_getTransactionReceipt: { status: "0x0" } };
+    assert.equal(await sendStatus(base, "0xh"), "failed");
+    answers = { eth_getTransactionReceipt: null, eth_getTransactionByHash: { hash: "0xh" } };
+    assert.equal(await sendStatus(base, "0xh"), "seen", "a node has it, not in a block yet");
+    answers = {};
+    assert.equal(await sendStatus(base, "0xh"), "unknown", "no node knows it");
+    answers = { getSignatureStatuses: { value: [{ err: null, confirmationStatus: "finalized" }] } };
+    assert.equal(await sendStatus(sol, "sig"), "confirmed");
+    answers = { getSignatureStatuses: { value: [{ err: { InstructionError: [0, "x"] } }] } };
+    assert.equal(await sendStatus(sol, "sig"), "failed");
+    answers = { getSignatureStatuses: { value: [null] } };
+    assert.equal(await sendStatus(sol, "sig"), "unknown");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});
+
+test("after a send, 'not sent' only when the send wasn't certain, nothing ever saw it, and the chain said 'unknown' at the end", async () => {
+  const { watchSend } = await import("../src/lib/send-watch");
+  const run = async (answers: ("confirmed" | "failed" | "seen" | "unknown" | "error")[], certain: boolean) => {
+    const updates: string[] = [];
+    let i = 0;
+    const outcome = await watchSend({
+      check: async () => { const a = answers[Math.min(i++, answers.length - 1)]!; if (a === "error") throw new Error("endpoint down"); return a; },
+      certain, ticks: answers.length, settleUnknowns: 3, sleep: async () => {}, onUpdate: s => updates.push(s),
+    });
+    return { outcome, updates };
+  };
+  const u = (n: number) => Array<"unknown">(n).fill("unknown");
+  // Nothing ever knew it, the send wasn't certain, and the last checks were the chain's own "unknown": not sent.
+  assert.equal((await run(u(6), false)).outcome, "not-sent");
+  // Checks that failed (endpoints down) prove nothing, even at the end.
+  assert.equal((await run([...u(5), "error"], false)).outcome, "unsettled");
+  assert.equal((await run(Array(6).fill("error"), false)).outcome, "unsettled");
+  // Seen once (in a node's pool), then nothing: never "not sent".
+  assert.equal((await run(["seen", ...u(5)], false)).outcome, "unsettled");
+  // A certain send is never "not sent", however long the chain says "unknown".
+  const certain = await run(u(6), true);
+  assert.equal(certain.outcome, "unsettled");
+  assert.ok(certain.updates.every(s => s === "seen"), "a certain send shows as sent while it waits");
+  // Settled answers end the watch at once.
+  assert.deepEqual(await run(["unknown", "seen", "confirmed"], false), { outcome: "confirmed", updates: ["checking", "seen", "confirmed"] });
+  assert.equal((await run(["error", "failed"], true)).outcome, "failed");
+  // Too few clean "unknown" answers at the end: not settled.
+  assert.equal((await run(["error", "error", "error", "unknown", "unknown"], false)).outcome, "unsettled");
+  // Stopped (the screen closed): nothing is concluded.
+  let alive = true;
+  const stopped = watchSend({ check: async () => { alive = false; return "unknown"; }, certain: false, ticks: 5, sleep: async () => {}, alive: () => alive });
+  assert.equal(await stopped, "stopped");
+});
+
+test("a send's Activity entry is updated once its outcome is known", async () => {
+  const { settleSendActivity } = await import("../src/lib/send");
+  await store.activity.add({ kind: "send", text: "Not confirmed yet (check the explorer before sending again) on Base: 1 USDC · 0xfeed" });
+  await store.activity.add({ kind: "send", text: "Sent on Base: 2 USDC · 0xbeef" });
+  await settleSendActivity("0xfeed", "not-sent");
+  await settleSendActivity("0xbeef", "confirmed");
+  const texts = (await store.activity.all()).map(a => a.text);
+  assert.ok(texts.includes("Not sent on Base: 1 USDC · 0xfeed"));
+  assert.ok(texts.includes("Confirmed on Base: 2 USDC · 0xbeef"));
+});
+
 test("blocklist refreshes only add hosts, never public suffixes, and a short download is refused", async () => {
   const { withoutSuffixes, refreshBlocklist, blocklist } = await import("../src/lib/blocklist");
   assert.deepEqual([...withoutSuffixes(["vercel.app", "drainer.vercel.app", "co.uk", "evil.co.uk", "com"], PSL)], ["drainer.vercel.app", "evil.co.uk"]);

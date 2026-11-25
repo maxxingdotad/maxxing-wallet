@@ -86,6 +86,14 @@ const MAX_ACTIVITY = 200;
 export const activity = {
   all: () => kept.get<Activity[]>("activity", []),
   add: (entry: Omit<Activity, "at">) => kept.update<Activity[]>("activity", [], all => [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),
+  /** Rewrites the newest entry that mentions `ref` (a transaction's hash), when what happened to it becomes known. */
+  settle: (ref: string, rewrite: (text: string) => string) => kept.update<Activity[]>("activity", [], all => {
+    const i = all.findIndex(a => a.text.includes(ref));
+    if (i < 0) return all;
+    const next = [...all];
+    next[i] = { ...next[i]!, text: rewrite(next[i]!.text) };
+    return next;
+  }),
   /** Adds the entry unless the same kind of entry for the same site was added within `ms` (so a site can't flood the list). */
   addUnlessRecent: (entry: Omit<Activity, "at">, ms: number) => kept.update<Activity[]>("activity", [], all =>
     all.some(a => a.kind === entry.kind && a.site === entry.site && Date.now() - a.at < ms) ? all : [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),

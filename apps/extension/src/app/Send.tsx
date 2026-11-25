@@ -4,7 +4,8 @@ import { TokenMark, short, usd, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
 import { loadPortfolio } from "../lib/balances";
 import { explorerTx, networkById, networks } from "../lib/chains";
-import { checkRecipient, draftEvmSend, draftSolSend, sendEvm, sendSol, validRecipient, type EvmDraft, type RecipientCheck, type SolDraft } from "../lib/send";
+import { checkRecipient, draftEvmSend, draftSolSend, sendEvm, sendSol, sendStatus, settleSendActivity, validRecipient, type EvmDraft, type RecipientCheck, type SolDraft } from "../lib/send";
+import { watchSend, type WatchUpdate } from "../lib/send-watch";
 import { settings } from "../lib/store";
 import type * as wallet from "../lib/wallet";
 
@@ -17,7 +18,22 @@ export function SendView({ holding: initial, account, onBack, toast }: { holding
   const [to, setTo] = useState(""), [amount, setAmount] = useState("");
   const [draft, setDraft] = useState<{ evm?: EvmDraft; sol?: SolDraft; check: RecipientCheck; large: boolean } | null>(null);
   const [error, setError] = useState(""), [busy, setBusy] = useState("");
-  const [done, setDone] = useState<{ hash: string; url: string | null } | null>(null);
+  const [done, setDone] = useState<{ hash: string; url: string | null; certain: boolean } | null>(null);
+  const [state, setState] = useState<WatchUpdate | "not-sent" | "unsettled" | null>(null);
+  const [round, setRound] = useState(0); // "Check again" starts another round
+  // After a send, ask the chain where it stands until it's settled (lib/send-watch.ts decides what may be said), and record the
+  // outcome in Activity once it's known.
+  useEffect(() => {
+    if (!done || !network) return;
+    let live = true;
+    void watchSend({ check: () => sendStatus(network, done.hash), certain: done.certain, onUpdate: s => { if (live) setState(s); }, alive: () => live })
+      .then(outcome => {
+        if (!live || outcome === "stopped") return;
+        if (outcome === "not-sent" || outcome === "unsettled") setState(outcome);
+        if (outcome !== "unsettled") void settleSendActivity(done.hash, outcome);
+      });
+    return () => { live = false; };
+  }, [done?.hash, round]);
   useEffect(() => { void settings.read().then(s => loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets)).then(p => { setHoldings(p.holdings.filter(h => h.raw && BigInt(h.raw) > 0n)); }); }, [account.evm, account.solana]);
   const network = holding?.networkId ? networks(true).find(n => n.networkId === holding.networkId) ?? null : null;
   const family = network?.family ?? "EVM";
@@ -39,22 +55,36 @@ export function SendView({ holding: initial, account, onBack, toast }: { holding
     if (!draft) return;
     setBusy("Signing and sending…"); setError("");
     try {
-      const hash = draft.evm ? await sendEvm(draft.evm) : await sendSol(draft.sol!, account.solana);
+      const sent = draft.evm ? await sendEvm(draft.evm) : await sendSol(draft.sol!, account.solana);
       const chain = networkById(holding!.networkId!);
-      setDone({ hash, url: chain ? explorerTx(chain, hash) : null });
+      setState(null);
+      setDone({ hash: sent.id, url: chain ? explorerTx(chain, sent.id) : null, certain: sent.certain });
     } catch (e) { setError(message(e)); } finally { setBusy(""); }
   };
 
   if (busy) return <div className="popup"><div className="backdrop" /><PageHead title="Send" /><Busy text={busy} /></div>;
-  if (done) return <div className="popup"><div className="backdrop" />
-    <div className="scroll" style={{ paddingTop: 48 }}>
-      <div className="danger-mark" style={{ background: "var(--positive-soft)", color: "var(--positive)", boxShadow: "0 0 0 8px rgb(60 176 122 / .06)" }}><SendIcon size={28} /></div>
-      <h2 className="center-title">Sent</h2>
-      <p className="center-sub">It's on its way. It shows in your balance once the network confirms it.</p>
+  if (done) {
+    // "Sent" only when a node is known to have it; "Not sent" only when lib/send-watch.ts proved it; otherwise "Not confirmed yet".
+    const checking = state === null || state === "checking" || state === "seen";
+    const view = state === "confirmed" ? { tone: "good", title: "Confirmed", text: "It's in a block. It shows in your balance now." }
+      : state === "failed" ? { tone: "bad", title: "Failed on the network", text: "The network took it but it failed, so nothing was sent apart from the fee. Check the explorer for the reason." }
+      : state === "not-sent" ? { tone: "warn", title: "Not sent", text: "No node has this transaction after five minutes of checking, so it wasn't sent. Nothing left your wallet; you can send again." }
+      : state === "unsettled" ? { tone: "warn", title: "Not confirmed yet", text: done.certain ? "The network took it but hasn't put it in a block yet. Check the explorer, or check again; don't send it again." : "The wallet couldn't confirm it either way. Check the explorer, or check again; don't send it again until it's settled." }
+      : state === "seen" || done.certain ? { tone: "good", title: "Sent", text: "It's on its way. It shows in your balance once the network confirms it." }
+      : { tone: "warn", title: "Not confirmed yet", text: "The network didn't answer clearly, so the wallet is checking whether it arrived. Don't send it again until this says." };
+    const colors = view.tone === "good" ? { background: "var(--positive-soft)", color: "var(--positive)" } : view.tone === "bad" ? { background: "var(--negative-soft)", color: "var(--negative)" } : { background: "rgba(240,185,11,.14)", color: "#F0B90B" };
+    return <div className="popup"><div className="backdrop" />
+    <div className="scroll" style={{ paddingTop: 48 }} data-testid="send-result" data-state={state ?? (done.certain ? "seen" : "checking")}>
+      <div className="danger-mark" style={colors}>{view.tone === "good" ? <SendIcon size={28} /> : <AlertTriangle size={28} />}</div>
+      <h2 className="center-title">{view.title}</h2>
+      <p className="center-sub">{view.text}</p>
+      {checking && <Busy text="Checking the network…" />}
+      {state === "unsettled" && <button type="button" className="btn secondary" style={{ marginBottom: 10 }} onClick={() => { setState(null); setRound(r => r + 1); }}>Check again</button>}
       <div className="card" style={{ padding: 12 }}><div className="addr">{done.hash}</div></div>
     </div>
     <div className="footer">{done.url && <button type="button" className="btn secondary" onClick={() => void chrome.tabs.create({ url: done.url! })}><ExternalLink size={16} />View on explorer</button>}<button type="button" className="btn primary" onClick={onBack}>Done</button></div>
   </div>;
+  }
 
   if (draft) {
     const s = draft.evm?.summary;

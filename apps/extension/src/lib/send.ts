@@ -3,12 +3,12 @@
  * own review (the same checks as any site's request), signed by the core, and broadcast through the chain's public RPC.
  */
 import bs58 from "bs58";
-import { getAddress, isAddress } from "viem";
+import { getAddress, isAddress, keccak256 } from "viem";
 import * as signing from "@maxxing/wallet-core/signing";
 import { checkedTransaction, transactionSummary, type TransactionSummary } from "@maxxing/wallet-core/review";
 import { signSolanaTransaction } from "@maxxing/wallet-core/solana-tx";
 import { networkById, type Network } from "./chains";
-import { rpc } from "./rpc";
+import { rpc, sendSigned } from "./rpc";
 import { activity, kept } from "./store";
 import { browserRpcUrls } from "@maxxing/wallet-sdk";
 
@@ -67,12 +67,41 @@ export async function draftEvmSend(input: { network: Network; from: string; to: 
   return { network, transaction, summary: transactionSummary(transaction), to };
 }
 
-export async function sendEvm(draft: EvmDraft): Promise<string> {
+/** What a send returns: its id, and whether a node is known to have taken it (false: not confirmed yet, see sendStatus). */
+export type Sent = { id: string; certain: boolean };
+
+export async function sendEvm(draft: EvmDraft): Promise<Sent> {
   const raw = await signing.evmSignTransaction({ transaction: draft.transaction });
-  const hash = await rpc<string>(draft.network.rpc, "eth_sendRawTransaction", [raw]);
+  // The hash comes from the signed bytes, so it is known even if no endpoint answers cleanly (see sendSigned).
+  const { id: hash, certain } = await sendSigned(draft.network.rpc, "eth_sendRawTransaction", [raw], keccak256(raw));
   await remember(draft.to);
-  await activity.add({ kind: "send", text: `Sent on ${draft.network.name}: ${draft.summary.tokenCall?.text ?? draft.summary.amount}` });
-  return hash;
+  await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} on ${draft.network.name}: ${draft.summary.tokenCall?.text ?? draft.summary.amount} · ${hash}` });
+  return { id: hash, certain };
+}
+
+/** Updates a send's Activity entry once its outcome is known: confirmed, failed on the network, or not sent. */
+export function settleSendActivity(id: string, outcome: "confirmed" | "failed" | "not-sent") {
+  const label = outcome === "confirmed" ? "Confirmed" : outcome === "failed" ? "Failed on the network" : "Not sent";
+  return activity.settle(id, text => text.replace(/^(Sent|Not confirmed yet \(check the explorer before sending again\))/, label));
+}
+
+/**
+ * Where a sent transaction stands, asked of the chain: "confirmed" or "failed" once it is in a block; "seen" when a node has it
+ * but it isn't in a block yet; "unknown" when no node knows it (it may still arrive, or it was never taken).
+ */
+export type SendState = "confirmed" | "failed" | "seen" | "unknown";
+export async function sendStatus(network: Network, id: string): Promise<SendState> {
+  if (network.family === "SOLANA") {
+    const { value } = await rpc<{ value: ({ err: unknown; confirmationStatus?: string } | null)[] }>(network.rpc, "getSignatureStatuses", [[id], { searchTransactionHistory: true }]);
+    const s = value?.[0];
+    if (!s) return "unknown";
+    if (s.err) return "failed";
+    return s.confirmationStatus === "confirmed" || s.confirmationStatus === "finalized" ? "confirmed" : "seen";
+  }
+  const receipt = await rpc<{ status: string } | null>(network.rpc, "eth_getTransactionReceipt", [id]);
+  if (receipt) return receipt.status === "0x1" ? "confirmed" : "failed";
+  const tx = await rpc<unknown>(network.rpc, "eth_getTransactionByHash", [id]);
+  return tx ? "seen" : "unknown";
 }
 
 // ── Solana ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -97,13 +126,14 @@ export async function draftSolSend(input: { network: Network; from: string; to: 
   return { network: input.network, tx, lamports, to: input.to.trim(), fee: 5000n };
 }
 
-export async function sendSol(draft: SolDraft, from: string): Promise<string> {
+export async function sendSol(draft: SolDraft, from: string): Promise<Sent> {
   const signed = await signSolanaTransaction(draft.tx, from, bytes => signing.solanaSignBytes({ bytes }));
   let b64 = ""; for (const b of signed) b64 += String.fromCharCode(b);
-  const signature = await rpc<string>(draft.network.rpc, "sendTransaction", [btoa(b64), { encoding: "base64", preflightCommitment: "confirmed" }]);
+  // A Solana transaction's id is its first signature, in the signed bytes (after the signature count).
+  const { id: signature, certain } = await sendSigned(draft.network.rpc, "sendTransaction", [btoa(b64), { encoding: "base64", preflightCommitment: "confirmed" }], bs58.encode(signed.subarray(1, 65)));
   await remember(draft.to);
-  await activity.add({ kind: "send", text: `Sent ${Number(draft.lamports) / 1e9} SOL on ${draft.network.name}` });
-  return signature;
+  await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} ${Number(draft.lamports) / 1e9} SOL on ${draft.network.name} · ${signature}` });
+  return { id: signature, certain };
 }
 
 export const rpcFor = (networkId: string) => { const chain = networkById(networkId); return chain ? browserRpcUrls(chain) : []; };

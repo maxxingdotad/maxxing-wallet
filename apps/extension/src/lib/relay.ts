@@ -6,10 +6,11 @@
  */
 import * as signing from "@maxxing/wallet-core/signing";
 import { checkedTransaction, transactionSummary, typedDataSummary, type TransactionSummary, type TypedDataSummary } from "@maxxing/wallet-core/review";
-import type { TypedDataDefinition } from "viem";
+import { keccak256, type TypedDataDefinition } from "viem";
 import { evmNetwork, type Network } from "./chains";
-import { rpc } from "./rpc";
+import { rpc, RpcError, sendSigned } from "./rpc";
 import { activity } from "./store";
+import PINNED from "./relay-pinned.json";
 import { browserRpcUrls } from "@maxxing/wallet-sdk";
 
 export const RELAY_API = "https://api.relay.link";
@@ -24,7 +25,7 @@ const relayCurrency = (asset: Asset) => asset.address ?? (asset.network.family =
 type RelayTxData = { from: string; to: string; data: string; value: string; chainId: number; gas?: string; maxFeePerGas?: string; maxPriorityFeePerGas?: string };
 type RelayStep = { id: string; action?: string; description?: string; kind: "transaction" | "signature"; requestId?: string; items: { status: string; data: RelayTxData }[] };
 export type Quote = {
-  requestId: string | null; steps: RelayStep[]; amountRaw: bigint; gasless: boolean;
+  requestId: string | null; steps: RelayStep[]; amountRaw: bigint; gasless: boolean; fromChainId: number; toChainId: number;
   amountIn: string; amountOut: string; minimumOut: string | null; amountOutUsd: number | null; amountInUsd: number | null;
   impactPercent: number | null; timeSeconds: number | null; feesUsd: number | null; rate: string | null;
 };
@@ -58,6 +59,7 @@ export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; 
   return {
     requestId: raw?.steps?.find((s: any) => s?.requestId)?.requestId ?? raw?.steps?.flatMap((s: any) => s?.items ?? []).find((i: any) => i?.data?.post?.body?.requestId)?.data.post.body.requestId ?? null,
     steps: Array.isArray(raw?.steps) ? raw.steps : [], amountRaw: input.amountRaw, gasless,
+    fromChainId: relayChainId(input.from.network), toChainId: relayChainId(input.to.network),
     amountIn: String(inn?.amountFormatted ?? ""), amountOut: String(out?.amountFormatted ?? "0"),
     minimumOut: out?.minimumAmount != null && out?.currency?.decimals != null ? (Number(out.minimumAmount) / 10 ** out.currency.decimals).toPrecision(6) : null,
     amountOutUsd: num(out?.amountUsd), amountInUsd: num(inn?.amountUsd),
@@ -77,40 +79,117 @@ type RelaySign = { sign: { signatureKind: string; domain: Record<string, unknown
  *   (every version's `approvalProxy`) and its depositories. Never a multicaller (anyone can make it call anything), a receiver or
  *   a solver's own address: an allowance there could be used by someone else.
  */
-export type RelayContracts = { targets: Set<string>; spenders: Set<string> };
+export type RelayContracts = {
+  targets: Set<string>; spenders: Set<string>; authorizers: Set<string>; paused?: boolean;
+  /** Where coins may be sent: depositories and receivers; and routers, for a swap on one network only (see prepare). */
+  coinTargets?: Set<string>; routers?: Set<string>;
+};
+export const PAUSED = "Swaps that spend a token on this network are paused until the wallet is updated. Swaps paying with the network's coin still work.";
+
+/**
+ * The spenders the wallet trusts come from a reviewed file (src/lib/relay-pinned.json: Relay's approval proxies and depositories
+ * per network, each checked on chain), not from Relay's live answer alone. If the live list for a network differs from the file
+ * (a contract added, moved or removed), or the network isn't in it, nothing may spend a token there: approvals and gasless swaps
+ * are refused until the wallet is updated and the change reviewed.
+ */
+type Pins = { chains: Record<string, { approvalProxies: string[]; depositories: string[]; contracts: string[]; receivers?: string[]; routers?: string[] }> };
+export function withPinnedSpenders(chainId: number, live: RelayContracts, pins: Pins = PINNED as Pins): RelayContracts {
+  const pin = pins.chains[String(chainId)];
+  // Where a transaction may go: only the pinned contracts, never a solver's address or anything else the live answer names. A
+  // network that isn't pinned gets none, so no Relay transaction is built there.
+  const targets = new Set((pin?.contracts ?? []).map(a => a.toLowerCase()));
+  const coins = { coinTargets: new Set([...(pin?.depositories ?? []), ...(pin?.receivers ?? [])].map(a => a.toLowerCase())), routers: new Set((pin?.routers ?? []).map(a => a.toLowerCase())) };
+  const liveProxies = [...live.authorizers].sort(), liveDepositories = [...live.spenders].filter(a => !live.authorizers.has(a)).sort();
+  const same = (a: string[], b: string[]) => a.length === b.length && a.every((x, i) => x === b[i]);
+  if (!pin || !same(liveProxies, [...pin.approvalProxies].sort()) || !same(liveDepositories, [...pin.depositories].sort()))
+    return { targets, spenders: new Set(), authorizers: new Set(), paused: true, ...coins };
+  return { targets, spenders: new Set([...pin.approvalProxies, ...pin.depositories]), authorizers: new Set(pin.approvalProxies), ...coins };
+}
 const contractCache = new Map<number, Promise<RelayContracts>>();
 const isAddress = (v: unknown): v is string => typeof v === "string" && /^0x[0-9a-fA-F]{40}$/.test(v);
+/** `authorizers`: the approval proxies alone, the only contracts a gasless (EIP-3009) authorization may name. */
 export function relayContractSets(chain: any): RelayContracts {
-  const targets = new Set<string>(), spenders = new Set<string>();
+  const targets = new Set<string>(), spenders = new Set<string>(), authorizers = new Set<string>();
   const collect = (v: unknown, key = "") => {
-    if (isAddress(v)) { targets.add(v.toLowerCase()); if (key === "approvalProxy" || key === "depository") spenders.add(v.toLowerCase()); }
-    else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) collect(x, Array.isArray(v) ? key : k);
+    if (isAddress(v)) {
+      const a = v.toLowerCase();
+      targets.add(a);
+      if (key === "approvalProxy" || key === "depository") spenders.add(a);
+      if (key === "approvalProxy") authorizers.add(a);
+    } else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) collect(x, Array.isArray(v) ? key : k);
   };
   collect(chain?.contracts); collect(chain?.protocol); collect(chain?.solverAddresses);
-  return { targets, spenders };
+  return { targets, spenders, authorizers };
 }
-export function relayContracts(chainId: number): Promise<RelayContracts> {
-  if (!contractCache.has(chainId)) contractCache.set(chainId, (async () => {
-    const response = await fetch(`${RELAY_API}/chains`, { credentials: "omit", referrerPolicy: "no-referrer" });
-    const raw: any = await response.json().catch(() => ({}));
-    const sets = relayContractSets((raw?.chains ?? []).find((c: any) => Number(c?.id) === chainId));
-    if (!sets.targets.size || !sets.spenders.size) { contractCache.delete(chainId); throw new Error("Couldn't read Relay's contracts for this network. Try again."); }
-    return sets;
+
+/**
+ * Whether `token` takes an EIP-3009 `receiveWithAuthorization` from `spender` on this network, found by simulating the call (no
+ * transaction): a token that has it rejects the dummy signature ("invalid signature"); one that doesn't has no such function
+ * (an empty revert, or a fallback that accepts anything). Gasless is offered only where this says yes.
+ * Only the chain's own answer decides, and only that is remembered: the call succeeding (no), or the contract reverting (yes if
+ * the revert is about the signature). An endpoint that is down or limited decides nothing: it is asked again next time.
+ */
+const RECEIVE_SELECTOR = "0xef55bec6"; // receiveWithAuthorization(address,address,uint256,uint256,uint256,bytes32,uint8,bytes32,bytes32)
+const word = (hex: string) => hex.replace(/^0x/, "").toLowerCase().padStart(64, "0");
+const supportCache = new Map<string, Promise<boolean>>();
+export function eip3009Supported(urls: string[], token: string, spender: string): Promise<boolean> {
+  const key = `${urls[0]}|${token.toLowerCase()}|${spender.toLowerCase()}`;
+  if (!supportCache.has(key)) supportCache.set(key, (async () => {
+    const data = RECEIVE_SELECTOR + [word("0x1111111111111111111111111111111111111111"), word(spender), word("1"), word("0"), word("ffffffffff"), "ab".repeat(32), word("1b"), word("0"), word("0")].join("");
+    try { await rpc<string>(urls, "eth_call", [{ from: spender, to: token, data }, "latest"]); return false; } // it accepted a junk signature: not EIP-3009
+    catch (error) {
+      // A revert is the chain's answer (rpc marks it final); anything else is the endpoint's trouble and decides nothing.
+      if (!(error instanceof RpcError) || !(error as { final?: boolean }).final) throw error;
+      return /revert/i.test(error.message) && /invalid signature|ecrecover|signature is invalid/i.test(error.message);
+    }
   })());
+  const answer = supportCache.get(key)!;
+  return answer.catch(() => { if (supportCache.get(key) === answer) supportCache.delete(key); return false; });
+}
+
+/** Whether a gasless swap can pay with this token on its network: one of Relay's approval proxies there can redeem EIP-3009. */
+export async function gaslessAvailable(pay: Asset): Promise<boolean> {
+  if (pay.address === null || pay.network.family !== "EVM") return false;
+  const chain = evmNetwork(relayChainId(pay.network));
+  if (!chain) return false;
+  const { authorizers } = await relayContracts(relayChainId(pay.network)).catch(() => ({ authorizers: new Set<string>() })); // empty when paused
+  for (const spender of authorizers) if (await eip3009Supported(browserRpcUrls(chain), pay.address, spender)) return true;
+  return false;
+}
+/** Relay's contracts for a network, checked against the pinned file. Only a good answer is kept; a failed read is tried again next time. */
+export function relayContracts(chainId: number): Promise<RelayContracts> {
+  if (!contractCache.has(chainId)) {
+    const answer = (async () => {
+      const response = await fetch(`${RELAY_API}/chains`, { credentials: "omit", referrerPolicy: "no-referrer" });
+      const raw: any = await response.json().catch(() => ({}));
+      const sets = relayContractSets((raw?.chains ?? []).find((c: any) => Number(c?.id) === chainId));
+      if (!sets.targets.size || !sets.spenders.size) throw new Error("Couldn't read Relay's contracts for this network. Try again.");
+      return withPinnedSpenders(chainId, sets);
+    })();
+    contractCache.set(chainId, answer);
+    answer.catch(() => { if (contractCache.get(chainId) === answer) contractCache.delete(chainId); });
+  }
   return contractCache.get(chainId)!;
 }
 
 const APPROVE = "0x095ea7b3";
+const ALLOWANCE = "0xdd62ed3e"; // allowance(owner, spender)
+/** Gas for an approval that can't be estimated yet (it follows a reset to 0). ERC-20 approvals use about 25,000–60,000. */
+const APPROVAL_GAS = 100_000n;
 /** Gas a Relay step may use at most when it can't be estimated yet (it runs after an approval that hasn't landed). */
 const GAS_CEILING = 1_500_000n;
 
 /** Longest an authorization may stay usable: a signed one that leaked couldn't be replayed days later. */
 const AUTHORIZATION_MAX_SECONDS = 24 * 3600;
 
-export type PreparedTx = { kind: "transaction"; transaction: ReturnType<typeof checkedTransaction>; summary: TransactionSummary; label: string; urls: string[]; maxFee: bigint };
+export type PreparedTx = {
+  kind: "transaction"; transaction: ReturnType<typeof checkedTransaction>; summary: TransactionSummary; label: string; urls: string[]; maxFee: bigint;
+  /** A deposit that spends the token: the allowance is read again right before it is signed (see execute). */
+  needsAllowance?: { token: string; spender: string; atLeast: bigint };
+};
 export type PreparedSignature = { kind: "signature"; typedData: TypedDataDefinition; summary: TypedDataSummary; label: string; text: string; post: RelaySign["post"] };
 export type PreparedStep = PreparedTx | PreparedSignature;
-export type Prepared = { steps: PreparedStep[]; maxFee: bigint; nativeSymbol: string; chainId: number; gasless: boolean };
+export type Prepared = { steps: PreparedStep[]; maxFee: bigint; nativeSymbol: string; chainId: number; gasless: boolean; from: string };
 
 /** The EIP-3009 message a gasless swap signs, exactly as the token's contract defines it. */
 const RECEIVE_WITH_AUTHORIZATION = [
@@ -137,7 +216,8 @@ function checkedAuthorization(item: RelaySign, q: Quote, from: string, pay: Asse
   const v = sign.value ?? {}, now = Math.floor(Date.now() / 1000);
   const spender = String(v.to).toLowerCase();
   if (String(v.from).toLowerCase() !== from.toLowerCase()) refuse("isn't from your address");
-  if (!contracts.spenders.has(spender)) refuse("isn't for one of Relay's approval contracts");
+  if (contracts.paused) throw new Error(PAUSED);
+  if (!contracts.authorizers.has(spender)) refuse("isn't for one of Relay's approval contracts");
   if (BigInt(String(v.value ?? "-1")) !== q.amountRaw) refuse("isn't for exactly the amount you're swapping");
   if (Number(v.validAfter) > now) refuse("starts later than now");
   if (!(Number(v.validBefore) > now && Number(v.validBefore) <= now + AUTHORIZATION_MAX_SECONDS)) refuse("stays valid too long");
@@ -173,31 +253,72 @@ export async function prepare(q: Quote, from: string, pay: Asset): Promise<Prepa
     : { type: "legacy" as const, gasPrice: BigInt(await rpc<string>(urls, "eth_gasPrice", [])) * 12n / 10n };
   const perGas = fees.type === "eip1559" ? fees.maxFeePerGas : fees.gasPrice;
   const out: PreparedStep[] = [];
-  let i = 0;
+  let i = 0, sent = 0n;
+  let allowanceFor: PreparedTx["needsAllowance"] | undefined; // set once the route's approval is checked; its deposit re-reads it
   for (const step of q.steps) for (const item of step.items) {
     const label = step.action ?? step.description ?? step.id;
-    if (step.kind === "signature") { out.push(checkedAuthorization(item.data as unknown as RelaySign, q, from, pay, chainId, contracts, label)); continue; }
+    if (step.kind === "signature") {
+      // Gasless only across networks: on one network Relay's gasless route uses Permit2, which leaves a lasting allowance.
+      if (q.toChainId === chainId) throw new Error(`Gasless swaps work between networks only. Turn off "Pay the network fee with ${pay.symbol}". Nothing was signed.`);
+      const authorization = checkedAuthorization(item.data as unknown as RelaySign, q, from, pay, chainId, contracts, label);
+      const spender = String((authorization.typedData.message as { to: string }).to);
+      if (!(await eip3009Supported(urls, pay.address!, spender))) throw new Error(`${pay.symbol} can't pay the network fee from the swap here. Turn off "Pay the network fee with ${pay.symbol}". Nothing was signed.`);
+      out.push(authorization);
+      continue;
+    }
     if (step.kind !== "transaction") throw new Error("Relay asked for a step the wallet doesn't know. Nothing was signed.");
-    const data = item.data;
-    const summary = transactionSummary(checkedTransaction({ chainId: data.chainId, to: data.to, data: data.data, value: BigInt(data.value || "0") }));
+    const data = { ...item.data };
     if (Number(data.chainId) !== chainId) throw new Error("Relay asked for a transaction on another network than the one you pay from. Nothing was signed.");
     if (data.from.toLowerCase() !== from.toLowerCase()) throw new Error("Relay's transaction isn't from your address. Nothing was signed.");
     const to = data.to.toLowerCase(), call = data.data.toLowerCase();
     if (call.startsWith(APPROVE)) {
       const spender = `0x${call.slice(34, 74)}`;
+      if (contracts.paused) throw new Error(PAUSED);
       if (to !== (pay.address ?? "").toLowerCase() || !contracts.spenders.has(spender)) throw new Error("Relay's approval isn't for the token you pay with, or not for one of Relay's approval contracts. Nothing was signed.");
-    } else if (!contracts.targets.has(to)) throw new Error("Relay's transaction goes to an address that isn't one of Relay's contracts. Nothing was signed.");
+      // An approval for more than this swap (often "unlimited") is made exactly this swap's amount: nothing is left to spend later.
+      if (BigInt(`0x${call.slice(74, 138) || "0"}`) > q.amountRaw) data.data = `${APPROVE}${word(spender)}${word(q.amountRaw.toString(16))}`;
+      if (BigInt(data.value || "0") !== 0n) throw new Error("Relay's approval sends coins. Nothing was signed.");
+      // What's already allowed decides the steps. If it can't be read, nothing is built: guessing could break the swap halfway.
+      const current = await rpc<string>(urls, "eth_call", [{ to: data.to, data: `${ALLOWANCE}${word(from)}${word(spender)}` }, "latest"]).then(BigInt).catch(() => null);
+      if (current === null) throw new Error("Couldn't read what this token already allows Relay to spend. Try again in a moment.");
+      allowanceFor = { token: data.to, spender, atLeast: q.amountRaw };
+      // Enough is already allowed: no approval is needed (and none is signed).
+      if (current >= q.amountRaw) continue;
+      // Some tokens (USDT on Ethereum) refuse to change an allowance that isn't 0. When one is left over and too small for this
+      // swap, a separate step sets it to 0 first, shown to the user as its own transaction. The approval after it can't be
+      // estimated before the reset lands (the token would refuse it now), so it gets a fixed gas limit that covers any approval.
+      if (current > 0n) {
+        await addTx({ ...data, data: `${APPROVE}${word(spender)}${word("0")}`, value: "0", gas: undefined }, "Reset the old allowance to 0 (this token requires it)");
+        await addTx(data, label, APPROVAL_GAS);
+        continue;
+      }
+    } else if (!contracts.targets.has(to)) throw new Error("Relay's transaction goes to an address that isn't one of Relay's pinned contracts. Nothing was signed.");
     const value = BigInt(data.value || "0");
-    const estimate = await rpc<string>(urls, "eth_estimateGas", [{ from, to: data.to, data: data.data, value: `0x${value.toString(16)}` }]).then(g => BigInt(g) * 12n / 10n).catch(() => null);
+    // Coins sent along: none when paying with a token; when paying with the coin, exactly the swap's amount over the whole route,
+    // and only ever to one of Relay's pinned contracts (never a solver's address or anything else the live answer names).
+    if (pay.address !== null && value !== 0n) throw new Error("Relay's transaction sends coins as well as the token you pay with. Nothing was signed.");
+    // Coins go to a pinned depository or receiver. A router takes them only in a swap on one network, for exactly the swap's amount
+    // (Relay swaps ETH on one network through its router, in that same transaction); a multicaller or anything else, never.
+    if (value !== 0n && !(contracts.coinTargets?.has(to) || (contracts.routers?.has(to) && q.toChainId === chainId && value === q.amountRaw)))
+      throw new Error("Relay's transaction sends coins to a contract that shouldn't receive them. Nothing was signed.");
+    sent += value;
+    await addTx(data, label, undefined, call.startsWith(APPROVE) ? undefined : allowanceFor); // the deposit re-checks, not the approval
+  }
+  /** Fills one checked transaction: the next nonce, gas estimated here (or Relay's, capped; or a fixed limit), fees set here. */
+  async function addTx(data: RelayTxData, label: string, fixedGas?: bigint, needsAllowance?: PreparedTx["needsAllowance"]) {
+    const value = BigInt(data.value || "0");
+    const summary = transactionSummary(checkedTransaction({ chainId: data.chainId, to: data.to, data: data.data, value }));
+    const estimate = fixedGas ?? await rpc<string>(urls, "eth_estimateGas", [{ from, to: data.to, data: data.data, value: `0x${value.toString(16)}` }]).then(g => BigInt(g) * 12n / 10n).catch(() => null);
     const relayGas = data.gas ? BigInt(data.gas) : null;
     const gas = estimate ?? (relayGas && relayGas <= GAS_CEILING ? relayGas : null);
     if (!gas) throw new Error("Couldn't work out this route's network fee. Try again.");
     const transaction = checkedTransaction({ chainId, to: data.to, data: data.data, value, nonce: nonce + i++, gas, ...fees });
-    out.push({ kind: "transaction", transaction, summary, label, urls, maxFee: gas * perGas });
+    out.push({ kind: "transaction", transaction, summary, label, urls, maxFee: gas * perGas, ...(needsAllowance ? { needsAllowance } : {}) });
   }
   if (!out.length) throw new Error("Relay's route had nothing to sign. Try again.");
+  if (pay.address === null && sent !== q.amountRaw) throw new Error("Relay's route sends a different amount than you're swapping. Nothing was signed.");
   const maxFee = out.reduce((s, t) => s + (t.kind === "transaction" ? t.maxFee : 0n), 0n);
-  return { steps: out, maxFee, nativeSymbol: chain.nativeSymbol, chainId, gasless: out.every(s => s.kind === "signature") };
+  return { steps: out, maxFee, nativeSymbol: chain.nativeSymbol, chainId, gasless: out.every(s => s.kind === "signature"), from };
 }
 
 async function waitForReceipt(urls: string[], hash: string, timeoutMs = 120_000) {
@@ -226,10 +347,26 @@ export async function execute(prepared: Prepared, onProgress: (text: string) => 
       if (!response.ok) throw new Error(((await response.json().catch(() => ({}))) as { message?: string }).message ?? `Relay didn't take the authorization (${response.status}).`);
       continue;
     }
+    // A deposit that spends the token: read the allowance again just before signing it (after any approval in the route has
+    // landed). The read goes through the same endpoint list, and rpc() asks first the endpoint that last answered, normally the one
+    // that just confirmed the approval. Endpoints can't be pinned exactly: a public RPC may serve from a node a block behind.
+    // That is accepted; the deposit would then fail on chain rather than spend more than allowed.
+    if (step.needsAllowance) {
+      const { token, spender, atLeast } = step.needsAllowance;
+      const now = await rpc<string>(step.urls, "eth_call", [{ to: token, data: `${ALLOWANCE}${word(prepared.from)}${word(spender)}` }, "latest"]).then(BigInt).catch(() => null);
+      if (now === null) throw new Error("Couldn't check the token's allowance before the deposit. Nothing more was sent; try again in a moment.");
+      if (now < atLeast) throw new Error("The token's allowance for Relay isn't what the review showed, so the deposit wasn't sent. Nothing more was sent.");
+    }
     const raw = await signing.evmSignTransaction({ transaction: step.transaction });
-    const hash = await rpc<string>(step.urls, "eth_sendRawTransaction", [raw]);
+    // The hash is the signed bytes' keccak256: known even when no endpoint answers cleanly. If it may have been sent, the wallet
+    // waits for its receipt instead of failing, and never builds the step again (that could make a second deposit).
+    const { id: hash, certain } = await sendSigned(step.urls, "eth_sendRawTransaction", [raw], keccak256(raw));
     hashes.push(hash);
-    await waitForReceipt(step.urls, hash);
+    await waitForReceipt(step.urls, hash, certain ? 120_000 : 240_000).catch(async error => {
+      if (!(error instanceof Error && /slow to confirm/.test(error.message))) throw error; // it landed and failed: say so
+      await activity.add({ kind: "send", text: `Swap step not confirmed yet: ${step.label} · ${hash}` });
+      throw new Error(`${step.label} isn't confirmed yet (${hash.slice(0, 10)}…). It may still land: check it on the explorer before trying again.`, { cause: error });
+    });
   }
   await activity.add({ kind: "send", text: prepared.gasless ? "Gasless swap sent through Relay (fee paid from the swap)" : `Swap/bridge sent through Relay (${hashes.length} transaction${hashes.length === 1 ? "" : "s"})` });
   return hashes;

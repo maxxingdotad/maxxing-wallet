@@ -83,6 +83,37 @@ async function attach(targetId, size) {
   return { sessionId, evaluate, waitFor, shot, click, clickWhenReady, typePin, setInput };
 }
 
+/**
+ * Store screenshots only (STORE_DEMO=1, used by scripts/store-shots.mjs): the MAXXING Data API's balance answer for this run's
+ * freshly made test wallet is replaced with made-up sample balances on four networks, so the listing shows a wallet in use rather
+ * than $0.00. Nothing else changes: every screen is the real extension. These are sample numbers, not anyone's wallet; a normal
+ * test run never does this.
+ */
+const STORE_DEMO = process.env.STORE_DEMO === "1";
+const DEMO = {
+  evm: [
+    ["eip155:1", "0x0000000000000000000000000000000000000000", true, "ETH", "Ether", "420000000000000000", 18, "1302.00"],
+    ["eip155:8453", "0x0000000000000000000000000000000000000000", true, "ETH", "Ether", "180000000000000000", 18, "558.00"],
+    ["eip155:8453", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", false, "USDC", "USD Coin", "1250000000", 6, "1250.00"],
+    ["eip155:42161", "0x0000000000000000000000000000000000000000", true, "ETH", "Ether", "50000000000000000", 18, "155.00"],
+    ["eip155:42161", "0xaf88d065e77c8cc2239327c5edb3a432268e5831", false, "USDC", "USD Coin", "340500000", 6, "340.50"],
+  ],
+  solana: [
+    ["solana:mainnet", "So11111111111111111111111111111111111111112", true, "SOL", "Solana", "6800000000", 9, "1054.00"],
+    ["solana:mainnet", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", false, "USDC", "USD Coin", "210000000", 6, "210.00"],
+  ],
+};
+async function demoBalances(sessionId) {
+  await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }] }, sessionId);
+  listeners.push(message => {
+    if (message.method !== "Fetch.requestPaused" || message.sessionId !== sessionId) return;
+    const address = decodeURIComponent(message.params.request.url.split("/wallets/")[1].split("/")[0]);
+    const rows = address.startsWith("0x") ? DEMO.evm : DEMO.solana;
+    const items = rows.map(([chainId, token, native, symbol, name, balanceRaw, decimals, valueUsd]) => ({ chainId, address: token, native, symbol, name, imageUrl: null, balanceRaw, decimals, valueUsd }));
+    void send("Fetch.fulfillRequest", { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }, { name: "access-control-allow-origin", value: "*" }], body: Buffer.from(JSON.stringify({ items })).toString("base64") }, sessionId);
+  });
+}
+
 /** The approval window the extension opens for the next site request. */
 async function nextApproval(seen) {
   for (let i = 0; i < 100; i++) {
@@ -104,6 +135,7 @@ try {
   // ── Onboarding ──────────────────────────────────────────────────────────────────────────────────────────────────────
   const { targetId: popupTarget } = await send("Target.createTarget", { url: `${base}/popup.html` });
   const popup = await attach(popupTarget, [360, 600]);
+  if (STORE_DEMO) await demoBalances(popup.sessionId);
   await popup.waitFor(`document.body.innerText.includes("Create a new wallet")`);
   await sleep(1800); // let the welcome animation settle
   await popup.shot("01-welcome");

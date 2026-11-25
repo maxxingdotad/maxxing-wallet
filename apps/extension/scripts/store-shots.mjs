@@ -3,8 +3,8 @@
  * Store screenshots (1280×800, the size the Chrome Web Store, Edge and AMO accept), made from the real extension: the end-to-end
  * test's captures, each framed on the wallet's dark background with one line saying what it shows.
  *
- *   node scripts/e2e.mjs <shots>            the captures (real Chrome, real extension)
- *   node scripts/store-shots.mjs <shots>    → store/out/screenshots/
+ *   STORE_DEMO=1 node scripts/e2e.mjs <shots>   the captures (real Chrome, real extension; sample balances, see e2e.mjs)
+ *   node scripts/store-shots.mjs <shots>        → store/out/screenshots/
  */
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

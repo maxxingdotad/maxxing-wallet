@@ -7,7 +7,7 @@ import { loadPortfolio } from "../lib/balances";
 import { explorerTx, networks, type Network } from "../lib/chains";
 import { parseUnits } from "../lib/send";
 import { formatUnits } from "viem";
-import { execute, prepare, quote, status, type Asset, type Prepared, type Quote } from "../lib/relay";
+import { execute, gaslessAvailable, prepare, quote, status, type Asset, type Prepared, type Quote } from "../lib/relay";
 import { settings } from "../lib/store";
 import type * as wallet from "../lib/wallet";
 
@@ -38,7 +38,17 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   const from = fromAssets.find(x => key(x.asset) === fromKey) ?? null;
   const to = toAssets.find(a => key(a) === toKey) ?? null;
   // Paying with a token: the network fee can come out of the swap (gasless), on by default when there's no coin for gas there.
-  const canGasless = !!from && from.asset.address !== null;
+  // Gasless is offered only for a token that takes an EIP-3009 authorization from Relay's approval contract on that network
+  // (checked by simulating the call), and across networks: Relay's same-network gasless route would need a lasting allowance.
+  const [tokenGasless, setTokenGasless] = useState<boolean | null>(null);
+  useEffect(() => {
+    setTokenGasless(null);
+    if (!from?.asset.address) return;
+    let current = true; // an answer for a token the user has since changed away from is dropped
+    void gaslessAvailable(from.asset).then(ok => { if (current) setTokenGasless(ok); }, () => { if (current) setTokenGasless(false); });
+    return () => { current = false; };
+  }, [fromKey]);
+  const canGasless = !!from && !!to && from.asset.address !== null && tokenGasless === true && to.network.networkId !== from.asset.network.networkId;
   const hasGasCoin = !!from && (holdings ?? []).some(h => h.networkId === from.asset.network.networkId && !h.address);
   const [gaslessChoice, setGaslessChoice] = useState<boolean | null>(null);
   const gasless = canGasless && (gaslessChoice ?? !hasGasCoin);

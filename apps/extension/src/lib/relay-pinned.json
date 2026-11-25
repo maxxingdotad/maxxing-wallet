@@ -1,0 +1,679 @@
+{
+  "about": "Relay's contracts per EVM chain. approvalProxies and depositories: the only token spenders the wallet allows. contracts: the only addresses a Relay transaction may go to; solver addresses are never included. Coins may be sent only to depositories and receivers, or to a router for a swap on one network (exactly the amount). From https://api.relay.link/chains (contracts.*, protocol.*); each address verified to hold contract code on that chain via the chain registry's public RPC, or Relay's RPC for the chain when none answered. Regenerate with scripts/pin-relay-contracts.mjs and review the diff.",
+  "checkedOn": "2026-11-25",
+  "chains": {
+    "1": {
+      "name": "Ethereum",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "10": {
+      "name": "Optimism",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "56": {
+      "name": "BNB Chain",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "100": {
+      "name": "Gnosis",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "130": {
+      "name": "Unichain",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x47eb64e17a6d2fd559b608695e6d308cced918dd"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x1766d01b0c79337642ced0aae63cae65889f6818",
+        "0x47eb64e17a6d2fd559b608695e6d308cced918dd",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb0e22f8b026c5dc4b0bc33ef4c5d3231544aee3e",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "137": {
+      "name": "Polygon",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "143": {
+      "name": "Monad",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xf17902d51fdff7bf50aacc78d6bb399baf88b479"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be",
+        "0xf17902d51fdff7bf50aacc78d6bb399baf88b479"
+      ]
+    },
+    "146": {
+      "name": "Sonic",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be",
+        "0xe2035a0d568dec7f37b3267823cd9c919e744594"
+      ]
+    },
+    "480": {
+      "name": "World Chain",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa06e1351e2fd2d45b5d35633ca7ecf328684a109"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa06e1351e2fd2d45b5d35633ca7ecf328684a109",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be",
+        "0xfdfb8ae5d2f22a6c3ca37aba03af3d68afc2da68"
+      ]
+    },
+    "999": {
+      "name": "HyperEVM",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xd71e5c1d217d12855b37fe60299273aad91d6cec"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0x6355d84b39b9a2c49a94a079ec66694612994080",
+        "0xad330c234598452891f64701f3c01a2682bde6dd",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be",
+        "0xd71e5c1d217d12855b37fe60299273aad91d6cec"
+      ]
+    },
+    "4326": {
+      "name": "MegaETH",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xac4615ffec9dbf5efe28db0f98f0011e6df0dabd"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xac4615ffec9dbf5efe28db0f98f0011e6df0dabd",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "4663": {
+      "name": "Robinhood Chain",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "5000": {
+      "name": "Mantle",
+      "approvalProxies": [
+        "0x8754bc615047de01228a7527b712806a71a8dc9a",
+        "0xe4dfbd5e6784db1058124e2c87554c0591f0fb7b"
+      ],
+      "depositories": [
+        "0x59916da825d2d2ec1bf878d71c88826f6633ecca"
+      ],
+      "receivers": [
+        "0xf366da269047a06a7275a933c6d653409bd6de5e"
+      ],
+      "routers": [
+        "0x6328ea02d28131e58b28e55c6258258a30d90e05",
+        "0x9ef6d3c2f60d7b9008d74cab1fc0f899c957c819"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x49015fbfd51aa67c369afa01c0d808b58c9c590e",
+        "0x59916da825d2d2ec1bf878d71c88826f6633ecca",
+        "0x6328ea02d28131e58b28e55c6258258a30d90e05",
+        "0x8754bc615047de01228a7527b712806a71a8dc9a",
+        "0x9ef6d3c2f60d7b9008d74cab1fc0f899c957c819",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xe4dfbd5e6784db1058124e2c87554c0591f0fb7b",
+        "0xf366da269047a06a7275a933c6d653409bd6de5e"
+      ]
+    },
+    "5042": {
+      "name": "Arc",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "8453": {
+      "name": "Base",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "34443": {
+      "name": "Mode",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa06e1351e2fd2d45b5d35633ca7ecf328684a109"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa06e1351e2fd2d45b5d35633ca7ecf328684a109",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "42161": {
+      "name": "Arbitrum",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "42220": {
+      "name": "Celo",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x233efb8d94e4e3b6ba5cd7bac008d2c33900d1d5",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "43114": {
+      "name": "Avalanche",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "57073": {
+      "name": "Ink",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be",
+        "0xe2035a0d568dec7f37b3267823cd9c919e744594"
+      ]
+    },
+    "59144": {
+      "name": "Linea",
+      "approvalProxies": [
+        "0x8754bc615047de01228a7527b712806a71a8dc9a",
+        "0xe4dfbd5e6784db1058124e2c87554c0591f0fb7b"
+      ],
+      "depositories": [
+        "0x59916da825d2d2ec1bf878d71c88826f6633ecca"
+      ],
+      "receivers": [
+        "0x00000000aa467eba42a3d604b3d74d63b2b6c6cb"
+      ],
+      "routers": [
+        "0x6328ea02d28131e58b28e55c6258258a30d90e05",
+        "0x9ef6d3c2f60d7b9008d74cab1fc0f899c957c819"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x00000000aa467eba42a3d604b3d74d63b2b6c6cb",
+        "0x59916da825d2d2ec1bf878d71c88826f6633ecca",
+        "0x6328ea02d28131e58b28e55c6258258a30d90e05",
+        "0x8754bc615047de01228a7527b712806a71a8dc9a",
+        "0x9ef6d3c2f60d7b9008d74cab1fc0f899c957c819",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xe4dfbd5e6784db1058124e2c87554c0591f0fb7b"
+      ]
+    },
+    "80094": {
+      "name": "Berachain",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0x6355d84b39b9a2c49a94a079ec66694612994080",
+        "0x7f4babd2c7d35221e72ab67ea72cba99573a0089",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "99901": {
+      "name": "Elysium",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "534352": {
+      "name": "Scroll",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0x00000000aa467eba42a3d604b3d74d63b2b6c6cb"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x00000000aa467eba42a3d604b3d74d63b2b6c6cb",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    },
+    "7777777": {
+      "name": "Zora",
+      "approvalProxies": [
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ],
+      "depositories": [
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31"
+      ],
+      "receivers": [
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934"
+      ],
+      "routers": [
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f"
+      ],
+      "contracts": [
+        "0x0000000000002bdbf1bf3279983603ec279cc6df",
+        "0x0729e2a4716d9f7dd17858d5d504426d228697f7",
+        "0x4cd00e387622c35bddb9b4c962c136462338bc31",
+        "0x5567954cd026cebfe486062cb75848e0f1c12e58",
+        "0xa5f565650890fba1824ee0f21ebbbf660a179934",
+        "0xb90ed4c123843cbfd66b11411ee7694ef37e6e72",
+        "0xb92fe925dc43a0ecde6c8b1a2709c170ec4fff4f",
+        "0xca11bde05977b3631167028862be2a173976ca11",
+        "0xccc88a9d1b4ed6b0eaba998850414b24f1c315be"
+      ]
+    }
+  }
+}

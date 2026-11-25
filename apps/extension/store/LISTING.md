@@ -87,5 +87,6 @@ The Chrome package works unchanged (same zip). Edge's side panel follows Chrome'
 2. Bump `version` in `public/manifest.json` and `package.json`.
 3. `corepack pnpm --filter @maxxing/extension build`, the tests and `node scripts/e2e.mjs`.
 4. `node scripts/package.mjs` → `store/out/`.
-5. `node scripts/store-shots.mjs <e2e screenshots folder>` → `store/out/screenshots/` (1280×800).
+5. `STORE_DEMO=1 node scripts/e2e.mjs <folder>` (the real extension with sample balances, not anyone's wallet), then
+   `node scripts/store-shots.mjs <folder>` → `store/out/screenshots/` (1280×800).
 6. Check https://maxxing.ad/docs/privacy still describes what the extension sends, then submit.

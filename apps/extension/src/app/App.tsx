@@ -109,6 +109,11 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
       </div>
       {!active.backedUp && <div className="alert warn" style={{ marginBottom: 10 }}><ShieldCheck size={16} /><span><b>Back up your recovery phrase.</b> It's the only way back in if you lose this device. <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "export", kind: "phrase" })}>Back up now</button></span></div>}
       <div className="section-head"><h2>Tokens</h2>{portfolio && <button type="button" onClick={() => void load()}>{portfolio.source === "api" ? "Live from MAXXING" : "Read from the networks"}</button>}</div>
+      {/* Only when every endpoint of some network failed after retries: one quiet line, never a list of network names. */}
+      {portfolio?.errors.length ? <div className="stale-note" role="status" data-testid="stale-note">
+        <span>Some balances may be out of date</span>
+        <button type="button" className="link-btn" disabled={loading} onClick={() => void load()}>{loading ? "Retrying…" : "Retry"}</button>
+      </div> : null}
       {!portfolio ? <Busy text="Reading balances on every chain…" /> : holdings.length === 0
         ? <div className="card empty">Nothing here yet.<br />Receive tokens on any chain to see them in one balance.<div style={{ marginTop: 12 }}><button type="button" className="btn secondary" onClick={() => go({ name: "receive" })}><ArrowDownLeft size={16} />Receive</button></div></div>
         : <div className="card rows">{holdings.map(h => <button type="button" key={`${h.chain.id}:${h.address ?? h.symbol}`} className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => go({ name: "send", holding: h })}>
@@ -116,7 +121,6 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
           <div className="main"><b>{h.name}</b><small className="num">{h.amount} {h.symbol} · {h.chain.name}</small></div>
           <div className="end"><b className="num">{h.priced === false ? "—" : usd(h.usd)}</b><small>{h.priced === false ? "no price yet" : ""}</small></div>
         </button>)}</div>}
-      {portfolio?.errors.length ? <p style={{ fontSize: 11.5, color: "var(--dim)", margin: "8px 4px" }}>Couldn't reach: {portfolio.errors.slice(0, 4).join(", ")}{portfolio.errors.length > 4 ? ` and ${portfolio.errors.length - 4} more` : ""}.</p> : null}
     </div>
     <Dock tab="home" onTab={onTab} />
     {sheet && <AccountsSheet snap={snap} onClose={() => setSheet(false)} onChanged={onChanged} onAdd={kind => { setSheet(false); go({ name: "add", kind }); }}
