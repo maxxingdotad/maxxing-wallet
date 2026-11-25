@@ -1,0 +1,60 @@
+name: Uptime
+
+# Checks MAXXING's public addresses from outside every five minutes, so the operator hears about an outage even when MAXXING's own
+# servers (which run every other alert) are down. Not part of the SDK. See .github/uptime/README.md.
+#
+# Messages go to Telegram and/or Discord when these repository secrets are set (all optional):
+#   UPTIME_TELEGRAM_BOT_TOKEN, UPTIME_TELEGRAM_CHAT_ID, UPTIME_DISCORD_WEBHOOK_URL
+# UPTIME_WATCH_TOKEN (optional) is sent to the API's /health/watch when that endpoint requires it.
+# The run log shows only how many targets are down; which ones, and why, go to the channels above.
+# Without them, a run fails when something goes down (and every six hours while it stays down), and GitHub emails the failure.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/uptime
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # What was down at the last run, so each outage is said once (and once when it ends), not every five minutes.
+      - name: Restore last state
+        uses: actions/cache/restore@v4
+        with:
+          path: .uptime-state.json
+          key: uptime-state-${{ github.run_id }}
+          restore-keys: uptime-state-
+      - name: Check
+        id: check
+        run: node .github/uptime/check.mjs .github/uptime/targets.json .uptime-state.json
+        env:
+          UPTIME_TELEGRAM_BOT_TOKEN: ${{ secrets.UPTIME_TELEGRAM_BOT_TOKEN }}
+          UPTIME_TELEGRAM_CHAT_ID: ${{ secrets.UPTIME_TELEGRAM_CHAT_ID }}
+          UPTIME_DISCORD_WEBHOOK_URL: ${{ secrets.UPTIME_DISCORD_WEBHOOK_URL }}
+          UPTIME_WATCH_TOKEN: ${{ secrets.UPTIME_WATCH_TOKEN }}
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .uptime-state.json
+          key: uptime-state-${{ github.run_id }}
+      - name: Fail on news
+        if: steps.check.outputs.news == 'down'
+        run: |
+          echo "::error::Something went down: see the Check step's output."
+          exit 1

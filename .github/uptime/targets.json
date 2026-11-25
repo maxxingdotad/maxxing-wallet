@@ -1,0 +1,10 @@
+{
+  "targets": [
+    { "name": "API", "url": "https://api.maxxing.ad/health/ready", "expect": 200, "hint": "The API or its database is down: trading, sign-in and every app stop." },
+    { "name": "API alert checks", "url": "https://api.maxxing.ad/health/watch", "expect": 200, "watchToken": true, "hint": "The API answers, but its own alert checks stopped, so nothing else would alert." },
+    { "name": "maxxing.ad", "url": "https://maxxing.ad", "hint": "Check the web deployment and the domain's DNS." },
+    { "name": "Wallet", "url": "https://wallet.maxxing.ad", "hint": "The wallet window partner sites open is down." },
+    { "name": "Developers", "url": "https://developers.maxxing.ad", "hint": "Check the developers deployment." },
+    { "name": "Admin", "url": "https://admin.maxxing.ad", "hint": "Check the admin deployment." }
+  ]
+}
