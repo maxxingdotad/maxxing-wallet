@@ -1,5 +1,6 @@
 import { WALLET_ERROR_CODES, WALLET_PROTOCOL, WALLET_PROTOCOL_VERSION, WINDOW_METHODS, type WalletConnection, type WalletError, type WalletRequest, type WindowMethod } from "../protocol";
-import { checkPartnerApp, loadPartnerApp, reportUsage, type PartnerApp } from "../registry";
+import { API_URL, checkPartnerApp, loadPartnerApp, reportUsage, type PartnerApp } from "../registry";
+import { loadRuntimeConfig, websiteUrl } from "./runtime-config";
 import * as vault from "@maxxing/wallet-core/vault";
 import * as signing from "@maxxing/wallet-core/signing";
 import { approvalFor, approve, listApprovals, revoke, touch } from "@maxxing/wallet-core/approvals";
@@ -20,7 +21,6 @@ import { getChain } from "@maxxing/wallet-core/chains";
 vault.setWalletPublishing(false);
 vault.startWalletProtection();
 
-const MAXXING_URL = String(import.meta.env.VITE_PUBLIC_WEB_URL || (import.meta.env.DEV ? "http://localhost:5173" : "https://maxxing.ad")).replace(/\/$/, "");
 const root = document.getElementById("app")!;
 
 function show(...children: Child[]) {
@@ -62,8 +62,10 @@ function plainError(error: unknown): string {
 function renderAppsPage() {
   const activeId = vault.activePlatformWalletId();
   if (!activeId) {
-    show(h("main", {}, h("h1", {}, "Connected apps"), message("There's no MAXXING wallet on this device."),
-      h("a", { className: "button", href: MAXXING_URL, target: "_blank", rel: "noopener" }, "Open MAXXING")));
+    const open = h("a", { className: "button", href: websiteUrl(), target: "_blank", rel: "noopener" }, "Open MAXXING");
+    // Admin's website address: fetched only here, never in a connect or signing window.
+    void loadRuntimeConfig(API_URL).then(() => { open.href = websiteUrl(); });
+    show(h("main", {}, h("h1", {}, "Connected apps"), message("There's no MAXXING wallet on this device."), open));
     return;
   }
   const approvals = listApprovals(activeId);

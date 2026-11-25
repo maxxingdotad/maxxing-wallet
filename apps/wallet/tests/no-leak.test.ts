@@ -130,6 +130,7 @@ test("only reviewed files in the wallet window reach the network, other windows 
     "src/window/login.ts": ["BroadcastChannel", "postMessage"],                // hands the sign-in ticket back to the wallet window
     "src/window/main.ts": ["postMessage"],                                     // answers the partner site that opened the window
     "src/window/preview.ts": ["postMessage"],                                  // tells the developer dashboard its preview's height
+    "src/window/runtime-config.ts": ["fetch"],                                 // GET /v1/config: public display settings, no credentials, nothing sent
     "src/window/social.ts": ["BroadcastChannel", "fetch", "window.open"],      // social sign-in and app sessions: addresses and signatures
   };
   const root = new URL("../", import.meta.url);

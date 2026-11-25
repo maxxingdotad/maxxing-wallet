@@ -20,7 +20,8 @@
     "./review": "./src/review.ts",
     "./sign-in": "./src/sign-in.ts",
     "./simulation": "./src/simulation.ts",
-    "./chains": "./src/chains.ts"
+    "./chains": "./src/chains.ts",
+    "./app-links": "./src/app-links.ts"
   },
   "sideEffects": false,
   "scripts": {
