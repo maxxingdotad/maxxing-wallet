@@ -41,7 +41,7 @@ it" are at [developers.maxxing.ad/docs](https://developers.maxxing.ad/docs).
 - [Content-Security-Policy](#content-security-policy)
 - [EIP-1193 requests](#eip-1193-requests) and [errors](#errors)
 - [Server API](#server-api), [webhooks](#webhooks) and [verifying a sign-in on your server](#verifying-a-wallet-sign-in-on-your-server)
-- [Security](#security), [versioning](#versioning), [support](#support) and [license](#license)
+- [Security](#security), [open source](#open-source), [versioning](#versioning), [support](#support) and [license](#license)
 
 ## Requirements
 
@@ -72,7 +72,7 @@ npm install @maxxing/wallet-sdk
 **No build step?** Add one script and one tag. The button, account menu and wallet come with it:
 
 ```html
-<script src="https://developers.maxxing.ad/sdk/0.2.1/maxxing-wallet.js"></script>
+<script src="https://developers.maxxing.ad/sdk/0.2.2/maxxing-wallet.js"></script>
 <maxxing-connect app-id="app_your_app_id" chains="8453" mode="auto" accent="#7C3AED"></maxxing-connect>
 <script>
   const el = document.querySelector("maxxing-connect");
@@ -580,6 +580,12 @@ await post("/auth/verify", { nonce, signature });
 
 Found a vulnerability? Email [support@maxxing.ad](mailto:support@maxxing.ad) with "Security" in the subject. Please don't post it
 publicly first.
+
+## Open source
+
+The SDK's source is public at [github.com/maxxingdotad/maxxing-wallet](https://github.com/maxxingdotad/maxxing-wallet). Every
+release is built and published there with npm provenance, so the npm page links the exact commit and run that built it. Check the
+package you installed with `npm audit signatures`.
 
 ## Versioning
 

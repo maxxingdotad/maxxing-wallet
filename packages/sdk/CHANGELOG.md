@@ -6,6 +6,16 @@ published, and stay online. `https://developers.maxxing.ad/sdk/v0/` is always th
 updates (new networks) that haven't been pinned yet; release those as a patch version (0.x.y) so pinned users can take them.
 Policy: https://developers.maxxing.ad/versioning
 
+## 0.2.2 (2026-11-25)
+
+### Open source
+
+- The source is public at https://github.com/maxxingdotad/maxxing-wallet, and this is the first release built and published from
+  it, with npm provenance: the npm page links the exact commit and workflow run. `npm audit signatures` checks it.
+- The SDK builds on its own: its network list is generated from MAXXING's chain registry into `src/chains.generated.ts` (public
+  data only). The networks offered are unchanged.
+- `package.json` names the repository.
+
 ## 0.2.1 (2026-11-25)
 
 ### Docs
