@@ -72,7 +72,7 @@ npm install @maxxing/wallet-sdk
 **No build step?** Add one script and one tag. The button, account menu and wallet come with it:
 
 ```html
-<script src="https://developers.maxxing.ad/sdk/0.2.2/maxxing-wallet.js"></script>
+<script src="https://developers.maxxing.ad/sdk/0.2.3/maxxing-wallet.js"></script>
 <maxxing-connect app-id="app_your_app_id" chains="8453" mode="auto" accent="#7C3AED"></maxxing-connect>
 <script>
   const el = document.querySelector("maxxing-connect");

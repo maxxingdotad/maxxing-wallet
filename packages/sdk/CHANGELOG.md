@@ -9,6 +9,14 @@ networks before they reach a numbered release; each such update is then released
 
 Versioning policy: https://developers.maxxing.ad/versioning
 
+## 0.2.3 (2026-11-25)
+
+### Docs
+
+- The README is rewritten and checked against the code.
+- The package now includes its MIT `LICENSE` file.
+- No code changes.
+
 ## 0.2.2 (2026-11-25)
 
 ### Open source

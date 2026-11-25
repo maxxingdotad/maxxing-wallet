@@ -1,6 +1,6 @@
 {
   "name": "@maxxing/wallet-sdk",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Let your users connect their MAXXING wallet: an EIP-1193 provider (EIP-6963) and a Solana Wallet Standard wallet.",
   "license": "MIT",
   "homepage": "https://developers.maxxing.ad/docs",
