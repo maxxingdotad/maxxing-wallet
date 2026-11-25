@@ -1,0 +1,128 @@
+/* The wallet window. Same palette as the wallet screens (src/ui/styles.css) and the web app. */
+:root {
+  --bg: #0C0D0F; --bg-elevated: #141518; --bg-elevated-2: #1C1E22;
+  --text: #F4F4F5; --muted: rgb(244 244 245 / .6); --line: rgb(244 244 245 / .085); --line-strong: rgb(244 244 245 / .13);
+  --lime: #E8E4DC; --lime-soft: rgb(232 228 220 / .1); --negative: #E15D55; --warning: #f1c75b;
+  --radius-sm: 10px; --radius-md: 12px; --radius-lg: 16px;
+  --accent-ink: #141518; --accent-edge: transparent;
+  --font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+/* The wallet's own screens (src/ui) open over this page and bring global styles; these rules are scoped to win over them. */
+[hidden] { display: none !important; }
+html:root, html:root body { margin: 0; min-height: 100%; background: var(--page-bg, var(--bg)); color: var(--text); font: 15px/1.45 var(--font); }
+#app { color: var(--text); font-family: var(--font); }
+main { max-width: 440px; margin: 0 auto; padding: 22px 18px 28px; display: flex; flex-direction: column; gap: 14px; }
+main.center { min-height: 100vh; align-items: center; justify-content: center; color: var(--muted); }
+h1 { font-size: 20px; line-height: 1.25; margin: 4px 0 0; letter-spacing: -.01em; }
+p { margin: 0; }
+.app { display: grid; grid-template-columns: 48px 1fr; gap: 12px; align-items: center; padding: 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--bg-elevated); }
+.app > div { display: flex; flex-direction: column; min-width: 0; }
+.app strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app .warn { grid-column: 1 / -1; }
+.app-logo { width: 48px; height: 48px; border-radius: 12px; object-fit: cover; background: var(--bg-elevated-2); }
+.app-logo.letter { display: grid; place-items: center; font-weight: 700; font-size: 20px; color: var(--lime); background: var(--lime-soft); }
+.origin { color: var(--muted); font-size: 13px; word-break: break-all; }
+.wallet { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 13px; padding: 8px 12px; border-radius: var(--radius-sm); background: var(--bg-elevated); }
+.wallet span { color: var(--text); }
+code, pre { font-family: ui-monospace, "SFMono-Regular", Consolas, monospace; font-size: 12.5px; }
+.points { margin: 0; padding-left: 18px; color: var(--muted); display: grid; gap: 6px; }
+.message { margin: 0; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word; padding: 12px; border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--line); }
+.message.raw { color: var(--muted); }
+.rows { display: grid; grid-template-columns: auto 1fr; gap: 8px 14px; margin: 0; padding: 12px; border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--line); }
+.rows dt { color: var(--muted); font-size: 13px; }
+.rows dd { margin: 0; text-align: right; word-break: break-all; font-size: 13.5px; }
+details summary { cursor: pointer; color: var(--muted); font-size: 13px; padding: 4px 0; }
+details .rows { margin-top: 8px; }
+.action { font-weight: 600; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-elevated); border: 1px solid var(--line-strong); }
+.note, .fine { color: var(--muted); font-size: 13px; }
+.fine { font-size: 12px; text-align: center; }
+#app[data-mode="light"] { --warning: #9a6a00; --negative: #c23c34; }
+.warn { color: var(--warning); font-size: 13px; padding: 10px 12px; border-radius: var(--radius-sm); background: rgba(241,199,91,.08); }
+.error { color: var(--negative); font-size: 13px; min-height: 0; }
+.error:empty { display: none; }
+.done { color: var(--lime); font-weight: 600; }
+.confirm { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--muted); }
+.check { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+.actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+main button, main .button { appearance: none; border: 0; border-radius: var(--radius-md); padding: 12px 16px; font: 600 15px/1.2 inherit; font-family: inherit; cursor: pointer; text-align: center; text-decoration: none; background: var(--lime); color: var(--accent-ink); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+main button.secondary { background: var(--bg-elevated-2); color: var(--text); border: 1px solid var(--line-strong); }
+main button.link { background: none; color: var(--muted); font-weight: 500; padding: 6px; text-decoration: underline; }
+main button:disabled { opacity: .55; cursor: default; }
+main button:focus-visible, main .button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+.apps { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.apps li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px; border-radius: var(--radius-md); background: var(--bg-elevated); border: 1px solid var(--line); }
+.apps li > div { display: flex; flex-direction: column; min-width: 0; }
+.apps small { color: var(--muted); font-size: 12px; }
+main .apps button { padding: 8px 12px; font-size: 13px; }
+.statement { padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-elevated); border: 1px solid var(--line); font-size: 14px; }
+.insight { display: flex; flex-direction: column; gap: 8px; }
+.insight-title { color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.changes { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.changes li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-elevated); border: 1px solid var(--line); font-size: 14px; }
+.changes li span { color: var(--muted); font-size: 13px; }
+.changes li.out b { color: var(--negative); }
+.changes li.in b { color: #3CB07A; }
+.fine.left { text-align: left; }
+/* ---------- Sign-in, drawn from the app's look (src/window/signin-view.ts) ---------- */
+.app.centered, .app.bare { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 6px 0 0; border: 0; background: none; }
+.app-logo.large { width: 64px; height: 64px; border-radius: var(--radius-lg); }
+.app-logo.letter.large { font-size: 28px; }
+.origin.pill { display: inline-block; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line-strong); font-size: 12px; word-break: normal; }
+.headline { display: flex; flex-direction: column; gap: 4px; }
+.subtitle { color: var(--muted); font-size: 14px; }
+main.logo-centered .headline, main.logo-hidden .headline { text-align: center; align-items: center; }
+.terms a { color: var(--text); }
+
+html.preview, html.preview body { overflow: hidden; min-height: 0 !important; }
+
+/* ---------- Sign-in: MAXXING's own (as on maxxing.ad), in the app's colours (src/window/signin-view.ts) ---------- */
+footer.secured { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 2px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11.5px; }
+footer.secured img { border-radius: 3px; opacity: .85; }
+main.signin { max-width: 420px; padding: 18px 20px 16px; gap: 14px; background: linear-gradient(180deg, color-mix(in srgb, var(--text) 5%, transparent), transparent 140px); }
+.signin-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.signin-top > header { flex: 1; min-width: 0; }
+main.signin .app { padding: 0; border: 0; background: none; grid-template-columns: 36px 1fr; gap: 10px; }
+main.signin .app-logo.small { width: 36px; height: 36px; border-radius: 10px; }
+main.signin .app strong { font-size: 14.5px; }
+main.signin .app .origin { font-size: 12px; }
+main.signin .app.centered { align-items: center; }
+main.signin.logo-centered .signin-top { flex-direction: row-reverse; }
+main.signin.logo-centered .signin-top > header { margin-right: -36px; }
+main button.close { flex: none; display: inline-grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 999px; background: var(--bg-elevated); color: var(--muted); border: 1px solid var(--line-strong); box-shadow: none; }
+main button.close:hover { color: var(--text); }
+main.signin .headline { gap: 3px; margin-top: 2px; }
+main.signin h1 { font-size: 22px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+main.signin.logo-centered .headline { text-align: center; }
+.socials { display: flex; flex-wrap: wrap; gap: 8px; }
+main button.social { display: inline-flex; align-items: center; justify-content: center; gap: 10px; height: 48px; padding: 0 14px; border-radius: var(--radius-md); background: transparent; color: var(--text); border: 1px solid var(--line-strong); box-shadow: none; font: 600 14px/1 var(--font); transition: border-color .15s, background .15s, transform .15s; }
+main button.social:hover:not(:disabled) { border-color: var(--lime); background: var(--lime-soft); }
+main button.social:active:not(:disabled) { transform: translateY(1px); }
+main button.social.wide { flex: 1 1 200px; }
+main button.social.square { flex: none; width: 48px; padding: 0; background: var(--bg-elevated); }
+main button.social[hidden] { display: none; }
+main button.social.more { font-weight: 700; }
+.socials.stacked { display: grid; grid-template-columns: repeat(auto-fit, minmax(48px, 1fr)); }
+.socials.stacked button.social.wide { grid-column: 1 / -1; }
+main .socials.stacked button.social.square { width: auto; }
+.socials.grid { display: grid; grid-template-columns: 1fr 1fr; }
+.socials.grid button.social { justify-content: flex-start; }
+.social .initial { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 6px; background: var(--bg-elevated-2); font-size: 11px; font-weight: 800; }
+.choices { display: grid; gap: 8px; }
+main button.choice { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; min-height: 60px; border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-elevated-2) 55%, transparent); color: var(--text); border: 1px solid var(--line-strong); box-shadow: none; text-align: left; font: inherit; transition: border-color .15s, background .15s; }
+main button.choice:hover:not(:disabled) { border-color: var(--lime); }
+main button.choice:hover .choice-go { color: var(--lime); transform: translateX(2px); }
+main button.choice.primary { border-color: var(--lime); background: var(--lime-soft); }
+.choice-icon { flex: none; display: inline-grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: var(--bg-elevated); color: var(--text); }
+main button.choice.primary .choice-icon { background: var(--lime); color: var(--accent-ink); }
+.choice-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.choice-text b { font-size: 14px; font-weight: 600; }
+.choice-text small { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.choice-go { flex: none; color: var(--muted); display: inline-grid; transition: transform .15s, color .15s; }
+.or { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+main.signin .privacy { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); font-size: 12px; text-align: center; }
+main.signin .terms { font-size: 12px; text-align: center; }
+.privacy svg { flex: none; }

@@ -21,7 +21,10 @@ the newest version.
 ## In scope
 
 - `@maxxing/wallet-sdk` (this repository)
-- The wallet window at `wallet.maxxing.ad` that the SDK opens
+- `@maxxing/wallet-core` (this repository): the recovery phrase, the PIN and passkey vault, signing, and the request screens' checks
+- The wallet window at `wallet.maxxing.ad` that the SDK opens (`apps/wallet` in this repository)
+- Anything that contradicts [docs/SELF-CUSTODY.md](docs/SELF-CUSTODY.md): a way for a recovery phrase, a key or the PIN to leave
+  the device, or for MAXXING to sign for a user
 - The public APIs the SDK calls at `api.maxxing.ad`
 
 Please don't test against other people's wallets or accounts, run denial-of-service tests, or use social engineering.

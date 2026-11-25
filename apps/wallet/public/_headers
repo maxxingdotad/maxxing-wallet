@@ -1,0 +1,126 @@
+# Security headers for the wallet frame (same as vercel.json had): the frame may be embedded only by the site; the pop-up pages
+# (connect, apps) and their stylesheet have their own stricter rules.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors https://maxxing.ad https://www.maxxing.ad
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/connect.html
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/login.html
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/apps.html
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/window.css
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/connect
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/apps
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/login
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://api.maxxing.ad; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
+  Cross-Origin-Opener-Policy: unsafe-none
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/preview
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors https://developers.maxxing.ad
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()
+
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/preview.html
+  ! Content-Security-Policy
+  ! Referrer-Policy
+  ! X-Content-Type-Options
+  ! Strict-Transport-Security
+  ! Permissions-Policy
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data: https://api.maxxing.ad; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors https://developers.maxxing.ad
+  Referrer-Policy: no-referrer
+  X-Content-Type-Options: nosniff
+  Strict-Transport-Security: max-age=63072000; includeSubDomains; preload
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=()

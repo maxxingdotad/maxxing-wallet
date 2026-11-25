@@ -22,3 +22,33 @@ jobs:
       - run: pnpm --filter @maxxing/wallet-sdk typecheck
       - run: pnpm --filter @maxxing/wallet-sdk test
       - run: pnpm --filter @maxxing/wallet-sdk build
+
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @maxxing/wallet-core typecheck
+      - run: pnpm --filter @maxxing/wallet-core test
+
+  wallet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @maxxing/wallet-frame test
+      # The same build Vercel deploys to wallet.maxxing.ad; the file hashes are printed so a deployment can be compared.
+      - run: pnpm --filter @maxxing/wallet-frame build
+        env:
+          VERCEL_ENV: production
+      - run: cd apps/wallet/dist && find . -type f | sort | xargs sha256sum

@@ -1,0 +1,95 @@
+/* MAXXING wallet screens. Same palette and shapes as the maxxing.ad web app. */
+:root {
+  color-scheme: dark;
+  --bg: #0C0D0F;
+  --surface-1: #141518;
+  --surface-2: #1C1E22;
+  --surface-3: #26282D;
+  --text: #F4F4F5;
+  --text-2: #C4C6CC;
+  --muted: rgb(244 244 245 / .6);
+  --line: rgb(244 244 245 / .085);
+  --line-strong: rgb(244 244 245 / .13);
+  --accent: #E8E4DC;
+  --accent-ink: #141518;
+  --negative: #E15D55;
+  --positive: #3CB07A;
+  --radius-control: 10px;
+  --radius-card: 12px;
+  --radius-modal: 16px;
+  --font: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+html, body { margin: 0; background: transparent; font-family: var(--font); color: var(--text); -webkit-font-smoothing: antialiased; }
+* { box-sizing: border-box; }
+button, input, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: .45; }
+:focus-visible { outline: 2px solid rgb(232 228 220 / .5); outline-offset: 2px; }
+
+.backdrop { position: fixed; inset: 0; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / .6); animation: fade .16s ease-out; }
+.sheet { width: min(400px, 100%); max-height: calc(100svh - 36px); overflow: auto; display: flex; flex-direction: column; gap: 14px; padding: 18px 20px 14px; background: var(--surface-1); border: 1px solid var(--line); border-radius: var(--radius-modal); box-shadow: 0 24px 64px rgb(0 0 0 / .5); animation: rise .2s ease-out; }
+.sheet form { display: flex; flex-direction: column; gap: 12px; }
+@media (max-width: 520px) {
+  .backdrop { place-items: end stretch; padding: 0; }
+  .sheet { width: 100%; max-height: 92svh; border-radius: var(--radius-modal) var(--radius-modal) 0 0; padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+}
+@keyframes fade { from { opacity: 0; } }
+@keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+
+.sheet-head { display: flex; align-items: center; justify-content: space-between; }
+.brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; color: var(--text-2); }
+.brand img { width: 18px; height: 18px; object-fit: contain; }
+.icon { width: 32px; height: 32px; border-radius: 999px; border: 1px solid var(--line); background: var(--surface-2); font-size: 18px; line-height: 1; color: var(--text-2); }
+.sheet-foot { text-align: center; font-size: 11px; color: var(--muted); padding-top: 2px; }
+
+h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
+p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.45; }
+small { color: var(--muted); font-size: 12px; }
+.error { color: var(--negative); }
+
+.primary, .secondary, .danger { width: 100%; height: 46px; border-radius: var(--radius-control); font-weight: 600; font-size: 15px; }
+.primary { border: 0; background: var(--accent); color: var(--accent-ink); }
+.secondary { border: 1px solid var(--line); background: transparent; color: var(--text-2); }
+.danger { border: 0; background: var(--negative); color: #fff; }
+.link { border: 0; background: none; color: var(--text-2); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; padding: 4px; }
+
+label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-2); }
+input, textarea { width: 100%; border-radius: var(--radius-control); border: 1px solid var(--line-strong); background: var(--surface-2); padding: 0 12px; font-size: 15px; }
+input { height: 44px; }
+textarea { padding: 12px; resize: none; line-height: 1.5; }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+.account { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 10px; border-radius: var(--radius-card); background: var(--surface-2); }
+.account b { font-size: 14px; }
+
+.pin { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; }
+.dots { display: flex; gap: 14px; margin: 10px 0 2px; }
+.dots span { width: 14px; height: 14px; border-radius: 999px; border: 1.5px solid var(--line-strong); transition: background .12s, border-color .12s; }
+.dots span.on { background: var(--accent); border-color: var(--accent); }
+.dots.shake { animation: shake .3s; }
+@keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.pin-note { min-height: 20px; font-size: 13px; }
+.keys { width: 100%; max-width: 300px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.keys button { height: 56px; border-radius: var(--radius-card); border: 0; background: var(--surface-2); font-size: 22px; font-weight: 500; }
+.keys button:hover:not(:disabled) { background: var(--surface-3); }
+.keys button:active:not(:disabled) { transform: scale(.97); }
+
+.phrase { position: relative; border-radius: var(--radius-card); background: var(--surface-2); padding: 12px; }
+.phrase ol { margin: 0; padding: 0; list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; }
+.phrase li { display: flex; gap: 6px; align-items: baseline; font-size: 14px; font-weight: 500; }
+.phrase li small { min-width: 16px; text-align: right; }
+.phrase.hidden ol { filter: blur(7px); user-select: none; }
+.reveal { position: absolute; inset: 0; border: 0; border-radius: var(--radius-card); background: rgb(20 21 24 / .55); font-size: 13px; padding: 16px; color: var(--text); }
+
+.choices { display: flex; flex-direction: column; gap: 8px; }
+.choices button, .file { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; text-align: left; padding: 14px; border-radius: var(--radius-card); border: 1px solid var(--line); background: var(--surface-2); }
+.choices button:hover, .file:hover { background: var(--surface-3); }
+.file { font-weight: 600; font-size: 14px; }
+
+.done-mark { width: 44px; height: 44px; margin: 4px auto 0; display: grid; place-items: center; border-radius: 999px; background: rgb(60 176 122 / .14); color: var(--positive); font-size: 22px; }
+.done-mark + h1, .done-mark ~ p { text-align: center; }
+
+.busy { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 36px 0; color: var(--text-2); font-size: 14px; }
+.spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

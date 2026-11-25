@@ -1,0 +1,45 @@
+{
+  "name": "@maxxing/wallet-core",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The MAXXING wallet's key-safety code: recovery phrase, PIN and passkey vault, signing, and what the user is shown before signing.",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxxingdotad/maxxing-wallet.git",
+    "directory": "packages/core"
+  },
+  "type": "module",
+  "exports": {
+    "./derive": "./src/derive.ts",
+    "./vault": "./src/vault.ts",
+    "./device-session": "./src/device-session.ts",
+    "./signing": "./src/signing.ts",
+    "./solana-tx": "./src/solana-tx.ts",
+    "./approvals": "./src/approvals.ts",
+    "./review": "./src/review.ts",
+    "./sign-in": "./src/sign-in.ts",
+    "./simulation": "./src/simulation.ts",
+    "./chains": "./src/chains.ts"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@maxxing/wallet-sdk": "workspace:*",
+    "@noble/hashes": "2.4.0",
+    "@scure/bip32": "2.4.0",
+    "@scure/bip39": "2.4.0",
+    "bs58": "6.0.0",
+    "tweetnacl": "1.0.3",
+    "viem": "2.37.3"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "6.2.5",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "@types/node": "22.15.0"
+  }
+}
