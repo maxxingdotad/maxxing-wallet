@@ -8,6 +8,23 @@ const { encode, decode } = await import("../src/lib/codec");
 const { checkSite, parseList, unicodeHost } = await import("../src/lib/phishing");
 const { siteName } = await import("../src/lib/site");
 const { readFileSync } = await import("node:fs");
+const { parseSuffixList } = await import("../src/lib/psl");
+const { clearIfSame } = await import("../src/lib/clipboard");
+const { sha256 } = await import("../src/app/kit");
+
+test("the clipboard is cleared only if it still holds the copied secret", async () => {
+  let clipboard = "the secret", emptied = 0;
+  const read = () => clipboard, empty = () => { emptied++; clipboard = ""; };
+  const hash = await sha256("the secret");
+  clipboard = "something the user copied since";
+  assert.equal(await clearIfSame(read, empty, hash), false);
+  assert.equal(clipboard, "something the user copied since");
+  clipboard = "the secret";
+  assert.equal(await clearIfSame(read, empty, hash), true);
+  assert.equal(clipboard, "");
+  assert.equal(await clearIfSame(read, empty, hash), false, "nothing to clear");
+  assert.equal(emptied, 1);
+});
 const { parseUnits, solTransferTransaction, checkRecipient, validRecipient } = await import("../src/lib/send");
 const { parseSolanaTransaction, isSolanaTransactionMessage } = await import("@maxxing/wallet-core/solana-tx");
 const wallet = await import("../src/lib/wallet");
@@ -23,17 +40,26 @@ test("requests survive the JSON hops: bigints and bytes come back exactly", () =
   assert.deepEqual(decode({ $bigint: "1", other: 2 }), { $bigint: "1", other: 2 });
 });
 
-test("phishing: MAXXING's own sites pass, look-alikes and listed hosts are stopped", () => {
-  for (const ok of ["https://maxxing.ad", "https://wallet.maxxing.ad", "https://any.sub.maxxing.ad", "https://app.example-dex.io", "http://localhost:3000", "https://maximizing.io", "https://mixing.app", "https://boxing.club", "https://taxing.gov"])
-    assert.equal(checkSite(ok).kind, "ok", ok);
-  for (const bad of ["https://maxxing-airdrop.claims", "https://m4xxing.io", "https://maxxlng.com", "https://claim-maxxing.net", "https://maxing.ad", "https://rnaxxing.ad",
-    "https://maxxing.ad.evil.io", "https://maxxlng.ad", "https://mаxxing.ad" /* Cyrillic а */, "https://maxxіng.io" /* Cyrillic і */, "https://maxxinq.io", "https://maxxing.com", "https://m-a-x-x-i-n-g.net"])
-    assert.equal(checkSite(bad).kind, "phishing", bad);
+const PSL = parseSuffixList(readFileSync(new URL("../public/psl/public_suffix_list.dat", import.meta.url), "utf8"));
+
+test("phishing: MAXXING's own sites pass; listed hosts are known scams; names that read as MAXXING get a warning", () => {
+  const verdict = (origin: string, listed = new Set<string>()) => checkSite(origin, listed, PSL).kind;
+  for (const ok of ["https://maxxing.ad", "https://wallet.maxxing.ad", "https://any.sub.maxxing.ad", "https://app.example-dex.io", "http://localhost:3000", "https://maximizing.io",
+    "https://mixing.app", "https://boxing.club", "https://taxing.gov", "https://looksmaxxing.com", "https://looksmaxxing.co.uk", "https://blog.gymmaxxing.io", "https://maxxingtips.vercel.app"])
+    assert.equal(verdict(ok), "ok", ok);
+  for (const lookalike of ["https://maxxing-airdrop.claims", "https://m4xxing.io", "https://maxxlng.com", "https://claim-maxxing.net", "https://maxing.ad", "https://rnaxxing.ad",
+    "https://maxxing.ad.evil.io", "https://mаxxing.ad" /* Cyrillic а */, "https://maxxіng.io" /* Cyrillic і */, "https://maxxinq.io", "https://maxxing.com", "https://m-a-x-x-i-n-g.net",
+    "https://maxxing.co.uk", "https://maxxing.vercel.app", "https://waxxing.com"])
+    assert.equal(verdict(lookalike), "lookalike", lookalike);
+  // One letter away counts only for the site's own name, not a word elsewhere in the address.
+  assert.equal(verdict("https://maxing.example.com"), "ok");
+  assert.equal(verdict("https://waxxing-supplies.example.com"), "ok");
   // Punycode is read as the letters a person sees.
   assert.equal(new URL("https://mаxxing.ad").hostname.startsWith("xn--"), true);
   assert.equal(unicodeHost(new URL("https://mаxxing.ad").hostname), "mаxxing.ad");
-  assert.equal(checkSite("https://evil.example", new Set(["evil.example"])).kind, "phishing");
-  assert.equal(checkSite("https://a.b.evil.example", new Set(["evil.example"])).kind, "phishing", "subdomains of a listed host too");
+  assert.equal(verdict("https://evil.example", new Set(["evil.example"])), "scam");
+  assert.equal(verdict("https://a.b.evil.example", new Set(["evil.example"])), "scam", "subdomains of a listed host too");
+  assert.equal(verdict("https://maxxing-claim.example", new Set(["maxxing-claim.example"])), "scam", "listed beats look-alike");
   // The shipped blocklist reads as hosts, and never lists MAXXING itself.
   const shipped = parseList(readFileSync(new URL("../public/phishing/hosts.txt", import.meta.url), "utf8"));
   assert.ok(shipped.size > 1000, "the shipped list is the real one");
@@ -41,13 +67,52 @@ test("phishing: MAXXING's own sites pass, look-alikes and listed hosts are stopp
   assert.deepEqual([...parseList(JSON.stringify({ deny: ["Evil.Example.", "*.wild.example", "nodot"] }))], ["evil.example", "wild.example"]);
 });
 
-test("the approval window shows who a site is: the registrable domain in full, the full address under it", () => {
-  assert.deepEqual(pick(siteName("https://app.uniswap-claim.example.co.uk")), { domain: "example.co.uk", host: "app.uniswap-claim.example.co.uk", insecure: false });
-  assert.equal(siteName("https://drainer.vercel.app").domain, "drainer.vercel.app", "on shared hosting, the customer's own name");
-  assert.equal(siteName("https://a.b.c.very-long-name-that-would-not-fit-on-one-line.example").domain, "very-long-name-that-would-not-fit-on-one-line.example");
-  assert.equal(siteName("http://shop.example").insecure, true);
-  assert.equal(siteName("http://localhost:5173").insecure, false);
-  assert.equal(siteName("https://mаxxing.ad").unicode, "mаxxing.ad");
+test("blocklist refreshes only add hosts, never public suffixes, and a short download is refused", async () => {
+  const { withoutSuffixes, refreshBlocklist, blocklist } = await import("../src/lib/blocklist");
+  assert.deepEqual([...withoutSuffixes(["vercel.app", "drainer.vercel.app", "co.uk", "evil.co.uk", "com"], PSL)], ["drainer.vercel.app", "evil.co.uk"]);
+  const real = globalThis.fetch;
+  let deny: string[] = [];
+  globalThis.fetch = (async (input: string | URL) => {
+    const url = String(input);
+    if (url.endsWith("phishing/hosts.txt")) return new Response("shipped-scam.example\n");
+    if (url.endsWith("psl/public_suffix_list.dat")) return new Response(readFileSync(new URL("../public/psl/public_suffix_list.dat", import.meta.url), "utf8"));
+    return new Response(JSON.stringify({ deny }));
+  }) as typeof fetch;
+  try {
+    deny = ["tiny.example"];
+    await assert.rejects(refreshBlocklist(), /looked wrong/);
+    deny = [...Array.from({ length: 1200 }, (_, i) => `scam-${i}.example`), "vercel.app", "pages.dev"];
+    await refreshBlocklist();
+    const list = await blocklist();
+    assert.ok(list.has("shipped-scam.example"), "the shipped hosts stay");
+    assert.ok(list.has("scam-7.example"));
+    assert.ok(!list.has("vercel.app") && !list.has("pages.dev"), "a public suffix would block every site under it");
+  } finally { globalThis.fetch = real; }
+});
+
+test("a public suffix list refresh must look like the real one", async () => {
+  const { plausibleUpdate } = await import("../src/lib/psl");
+  const text = readFileSync(new URL("../public/psl/public_suffix_list.dat", import.meta.url), "utf8");
+  assert.equal(plausibleUpdate(PSL, PSL), true);
+  assert.equal(plausibleUpdate(parseSuffixList(text.split("\n").slice(0, 4000).join("\n")), PSL), false, "truncated");
+  assert.equal(plausibleUpdate(parseSuffixList(text.replace(/^!www\.ck$/m, "")), PSL), false, "missing a known exception");
+  assert.equal(plausibleUpdate(parseSuffixList(`${text}\n${Array.from({ length: 2000 }, (_, i) => `x${i}.example`).join("\n")}`), PSL), false, "grew by far too much");
+  assert.equal(plausibleUpdate(parseSuffixList(`${text}\nnew-hosting.example`), PSL), true, "a normal update");
+});
+
+test("the approval window shows who a site is: the registrable domain from the full Public Suffix List, the full address under it", () => {
+  const name = (origin: string) => siteName(origin, PSL);
+  assert.deepEqual(pick(name("https://app.claim.example.co.uk")), { domain: "example.co.uk", host: "app.claim.example.co.uk", insecure: false });
+  for (const [origin, domain] of [
+    ["https://drainer.vercel.app", "drainer.vercel.app"], ["https://x.y.github.io", "y.github.io"], ["https://tenant.pages.dev", "tenant.pages.dev"],
+    ["https://shop.myshopify.com", "shop.myshopify.com"], ["https://a.b.s3.amazonaws.com", "b.s3.amazonaws.com"], ["https://app.example.com.au", "example.com.au"],
+    ["https://site.example.kawasaki.jp", "site.example.kawasaki.jp"] /* wildcard rule *.kawasaki.jp */, ["https://www.city.kawasaki.jp", "city.kawasaki.jp"] /* exception !city.kawasaki.jp */,
+    ["https://a.b.c.very-long-name-that-would-not-fit-on-one-line.example", "very-long-name-that-would-not-fit-on-one-line.example"],
+  ] as const) assert.equal(name(origin).domain, domain, origin);
+  assert.equal(name("http://shop.example").insecure, true);
+  assert.equal(name("http://localhost:5173").insecure, false);
+  assert.equal(name("https://mаxxing.ad").unicode, "mаxxing.ad");
+  assert.ok(PSL.normal.size > 5000, "the shipped list is the full one");
   // The page's CSS never cuts the name: no ellipsis anywhere in the approval window.
   assert.ok(!readFileSync(new URL("../src/approve.tsx", import.meta.url), "utf8").includes("ellipsis"));
 });
@@ -58,7 +123,8 @@ test("the pages may connect only to the registry's RPC origins and the named ser
   const { API_URL } = await import("../src/lib/balances");
   const { RELAY_API } = await import("../src/lib/relay");
   const { BLOCKLIST_SOURCE } = await import("../src/lib/blocklist");
-  assert.deepEqual(SERVICES, [API_URL, RELAY_API, new URL(BLOCKLIST_SOURCE).origin]);
+  const { PSL_SOURCE } = await import("../src/lib/psl");
+  assert.deepEqual(SERVICES, [API_URL, RELAY_API, new URL(BLOCKLIST_SOURCE).origin, new URL(PSL_SOURCE).origin]);
   const origins = connectOrigins();
   assert.ok(origins.every(o => /^https:\/\/[^/*]+$/.test(o)), "exact https origins, no wildcards");
   assert.ok(origins.length > 5);

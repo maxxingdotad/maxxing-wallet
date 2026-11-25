@@ -13,8 +13,9 @@ import { forgetIndexedDbDeviceSessions } from "@maxxing/wallet-core/device-sessi
 import { lockIfStale, lockNow } from "./lib/lock";
 import { blocklist, refreshBlocklist } from "./lib/blocklist";
 import { checkSite } from "./lib/phishing";
+import { refreshSuffixList, suffixRules } from "./lib/psl";
 import { ERRORS, LIMITS, isSiteMethod, type Pending, type SiteAnswer, type SiteRequest, type TabAnswer } from "./lib/protocol";
-import { account, activity, declines, grantedTo, moveOldRecords, sites } from "./lib/store";
+import { account, activity, declines, grantedTo, moveOldRecords, sites, trustedLookalikes } from "./lib/store";
 
 // Session storage (open sessions, the open account, pending requests) is for the extension's own pages, never content scripts.
 void chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })?.catch?.(() => {});
@@ -72,11 +73,14 @@ async function handleSiteRequest(message: SiteRequest, sender: chrome.runtime.Me
   const base = { id: `${tabId}:${message.id}`, requestId: message.id, method: message.method, params: message.params, origin, tabId, frameId, documentId: sender.documentId, createdAt: Date.now() };
 
   const waiting = await waitingIn(tabId);
-  const verdict = checkSite(origin, await blocklist());
-  if (verdict.kind === "phishing") {
-    // One block screen per tab: the site can't stack windows, and it never gets past this screen.
-    if (!waiting) {
-      await activity.add({ kind: "blocked", text: "Blocked a phishing site", site: origin });
+  const verdict = checkSite(origin, await blocklist(), await suffixRules());
+  if (verdict.kind === "scam") {
+    // The site never gets past this. The block screen shows once per tab and page, a few times a minute at most, and the
+    // Activity list notes it once every ten minutes, so a listed site can't flood either.
+    const shownKey = `block-shown:${tabId}:${origin}`;
+    if (!waiting && !(await session.get<boolean>(shownKey)) && !(await blockLimit(origin))) {
+      await session.set({ [shownKey]: true });
+      await activity.addUnlessRecent({ kind: "blocked", text: "Blocked a known scam site", site: origin }, 10 * 60_000);
       await openApproval({ ...base, kind: "blocked" });
     }
     return { done: true, ok: false, error: ERRORS.blocked };
@@ -92,8 +96,20 @@ async function handleSiteRequest(message: SiteRequest, sender: chrome.runtime.Me
     if (open && !grantedTo(permission, open)) return { done: true, ok: false, error: ERRORS.otherAccount };
   }
   if (await overLimit(origin)) return { done: true, ok: false, error: ERRORS.tooMany };
-  await openApproval({ ...base, kind: message.method === "connect" ? "connect" : "sign" });
+  const kind = message.method === "connect" ? "connect" : "sign";
+  // A name that reads as MAXXING: the window warns first, and the request goes on only if the user says they know this site.
+  if (verdict.kind === "lookalike" && !(await trustedLookalikes.has(origin))) await openApproval({ ...base, kind: "lookalike", next: kind });
+  else await openApproval({ ...base, kind });
   return { done: false };
+}
+
+/** At most a few block screens per site per minute (a tab that reloads, or many tabs). */
+async function blockLimit(origin: string, now = Date.now()) {
+  const key = `block-rate:${origin}`;
+  const recent = ((await session.get<number[]>(key)) ?? []).filter(t => now - t < 60_000);
+  if (recent.length >= LIMITS.blockScreensPerMinute) return true;
+  await session.set({ [key]: [...recent, now] });
+  return false;
 }
 
 /** A closed approval window answers its request as declined, so the site never waits forever. */
@@ -128,13 +144,15 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
   }
   if (message?.type === "site-status") {
     const origin = sender.origin ?? "";
-    Promise.all([sites.get(origin), account.read(), blocklist()])
-      .then(([permission, open, listed]) => reply(checkSite(origin, listed).kind === "ok" && grantedTo(permission, open) ? { evm: open.evm, solana: open.solana } : null), () => reply(null));
+    // A connected site learns the addresses; a listed one never does (a look-alike only got connected by passing the warning).
+    Promise.all([sites.get(origin), account.read(), blocklist(), suffixRules()])
+      .then(([permission, open, listed, rules]) => reply(checkSite(origin, listed, rules).kind !== "scam" && grantedTo(permission, open) ? { evm: open.evm, solana: open.solana } : null), () => reply(null));
     return true;
   }
-  if (message?.type === "clear-clipboard-later" && fromExtensionPage(sender)) {
-    // Alarms survive the service worker stopping; Chrome's shortest alarm is 30 seconds.
-    void chrome.alarms.create("clipboard-clear", { delayInMinutes: Math.max(0.5, Number(message.seconds) / 60 || 1) });
+  if (message?.type === "clear-clipboard-later" && fromExtensionPage(sender) && typeof message.hash === "string" && /^[0-9a-f]{64}$/.test(message.hash)) {
+    // Only the secret's hash is kept, to recognise it later. Alarms survive the service worker stopping; the shortest is 30 seconds.
+    void chrome.storage.session.set({ "clipboard-hash": message.hash })
+      .then(() => chrome.alarms.create("clipboard-clear", { delayInMinutes: Math.max(0.5, Number(message.seconds) / 60 || 1) }));
     return false;
   }
   return false;
@@ -142,10 +160,12 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
 
 // ── Clipboard: cleared from an offscreen document (Chrome), since the popup that copied may be closed by then ──────────────────
 async function clearClipboard() {
-  if (!chrome.offscreen) return;
+  const hash = await session.get<string>("clipboard-hash");
+  await chrome.storage.session.remove("clipboard-hash");
+  if (!chrome.offscreen || !hash) return;
   if (!(await chrome.offscreen.hasDocument?.().catch(() => false)))
-    await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.CLIPBOARD], justification: "Clear a copied recovery phrase or private key from the clipboard." });
-  await chrome.runtime.sendMessage({ type: "offscreen-clear-clipboard" }).catch(() => {});
+    await chrome.offscreen.createDocument({ url: "offscreen.html", reasons: [chrome.offscreen.Reason.CLIPBOARD], justification: "Clear a copied recovery phrase or private key from the clipboard, if it is still there." });
+  await chrome.runtime.sendMessage({ type: "offscreen-clear-clipboard", hash }).catch(() => {});
   await chrome.offscreen.closeDocument().catch(() => {});
 }
 
@@ -158,7 +178,7 @@ void ensureAlarms();
 
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name === "auto-lock") await lockIfStale();
-  else if (alarm.name === "blocklist") await refreshBlocklist().catch(() => {});
+  else if (alarm.name === "blocklist") { await refreshBlocklist().catch(() => {}); await refreshSuffixList().catch(() => {}); }
   else if (alarm.name === "clipboard-clear") await clearClipboard().catch(() => {});
 });
 

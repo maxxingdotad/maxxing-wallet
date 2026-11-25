@@ -53,7 +53,7 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
     case "settings": return frame(<SettingsView snap={snap} mode={mode} go={go} onTab={onTab} toast={showToast} onChanged={refresh} />);
     case "export": return frame(<ExportFlow kind={view.kind} onClose={() => go({ name: "settings" })} />);
     case "remove": return frame(<RemoveWallet backedUp={active.backedUp} onClose={() => go({ name: "settings" })} onRemoved={() => { refresh(); go({ name: "home" }); }} />);
-    default: return frame(<HomeView snap={snap} active={active} go={go} onTab={onTab} onChanged={refresh} />);
+    default: return frame(<HomeView snap={snap} active={active} go={go} onTab={onTab} onChanged={refresh} toast={showToast} />);
   }
 }
 
@@ -74,7 +74,7 @@ function Unlock({ snap, onOpen, onImport }: { snap: wallet.WalletSnapshot; onOpe
   </div>;
 }
 
-function HomeView({ snap, active, go, onTab, onChanged }: { snap: wallet.WalletSnapshot; active: wallet.WalletSnapshot["accounts"][number]; go: (v: View) => void; onTab: (t: DockTab) => void; onChanged: () => void }) {
+function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.WalletSnapshot; active: wallet.WalletSnapshot["accounts"][number]; go: (v: View) => void; onTab: (t: DockTab) => void; onChanged: () => void; toast: (t: string) => void }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -119,7 +119,8 @@ function HomeView({ snap, active, go, onTab, onChanged }: { snap: wallet.WalletS
       {portfolio?.errors.length ? <p style={{ fontSize: 11.5, color: "var(--dim)", margin: "8px 4px" }}>Couldn't reach: {portfolio.errors.slice(0, 4).join(", ")}{portfolio.errors.length > 4 ? ` and ${portfolio.errors.length - 4} more` : ""}.</p> : null}
     </div>
     <Dock tab="home" onTab={onTab} />
-    {sheet && <AccountsSheet snap={snap} onClose={() => setSheet(false)} onChanged={onChanged} onAdd={kind => { setSheet(false); go({ name: "add", kind }); }} />}
+    {sheet && <AccountsSheet snap={snap} onClose={() => setSheet(false)} onChanged={onChanged} onAdd={kind => { setSheet(false); go({ name: "add", kind }); }}
+      onSwitched={(label, evm) => void siteStore.all().then(all => { const others = all.filter(s => s.evm.toLowerCase() !== evm.toLowerCase()).length; toast(others ? `${label} is open. ${others} connected site${others === 1 ? "" : "s"} still use${others === 1 ? "s" : ""} another account until you connect again.` : `${label} is open.`); })} />}
   </div>;
 }
 
@@ -127,7 +128,7 @@ function HomeView({ snap, active, go, onTab, onChanged }: { snap: wallet.WalletS
  * Switching from the header: the open wallet's accounts (all from one recovery phrase: add, switch, rename, hide), then the other
  * wallets on this device, then a new wallet or an imported phrase.
  */
-function AccountsSheet({ snap, onClose, onChanged, onAdd }: { snap: wallet.WalletSnapshot; onClose: () => void; onChanged: () => void; onAdd: (kind: "create" | "import") => void }) {
+function AccountsSheet({ snap, onClose, onChanged, onAdd, onSwitched }: { snap: wallet.WalletSnapshot; onClose: () => void; onChanged: () => void; onAdd: (kind: "create" | "import") => void; onSwitched: (label: string, evm: string) => void }) {
   const active = snap.accounts.find(a => a.id === snap.activeId)!;
   const [editing, setEditing] = useState(false), [showHidden, setShowHidden] = useState(false);
   const [names, setNames] = useState<Record<number, string>>({});
@@ -139,6 +140,19 @@ function AccountsSheet({ snap, onClose, onChanged, onAdd }: { snap: wallet.Walle
   const visible = active.accounts.filter(a => showHidden || !a.hidden || a.index === active.selected);
   const hiddenCount = active.accounts.filter(a => a.hidden).length;
   const others = snap.accounts.filter(w => w.id !== active.id);
+  // Account totals. The open account's is read at once (the home screen reads it anyway); another account's only when the user
+  // taps it, one at a time, so the wallet never looks up all its addresses together (which would tie them to each other).
+  const [totals, setTotals] = useState<Record<string, number | null | "loading">>({});
+  const loadTotal = (a: { evm: string; solana: string }) => {
+    setTotals(t => ({ ...t, [a.evm]: "loading" }));
+    void settingsStore.read().then(s => loadPortfolio({ evm: a.evm, solana: a.solana }, s.showTestnets))
+      // A total when everything held has a price (an empty account is $0.00); "—" when something held can't be priced yet.
+      .then(p => setTotals(t => ({ ...t, [a.evm]: p.holdings.every(h => h.priced !== false || !h.raw || BigInt(h.raw) === 0n) ? p.totalUsd : null })), () => setTotals(t => ({ ...t, [a.evm]: null })));
+  };
+  const openEvm = active.accounts.find(a => a.index === active.selected)?.evm;
+  useEffect(() => { const open = active.accounts.find(a => a.index === active.selected); if (open) loadTotal(open); }, [openEvm]);
+  const [copied, setCopied] = useState("");
+  const copyAddress = async (evm: string) => { await copy(evm); setCopied(evm); setTimeout(() => setCopied(""), 1500); };
   return <>
     <div className="scrim" onClick={onClose} />
     <section className="sheet" role="dialog" aria-label="Accounts">
@@ -154,11 +168,19 @@ function AccountsSheet({ snap, onClose, onChanged, onAdd }: { snap: wallet.Walle
               onChange={e => setNames(n => ({ ...n, [a.index]: e.target.value }))} onBlur={() => { const next = names[a.index]; if (next !== undefined && next !== a.label) void run("Saving…", () => wallet.renameAccount(a.index, next), false); }} />
             {a.index !== 0 && a.index !== active.selected && <button type="button" className="chip" onClick={() => void run("Saving…", () => wallet.hideAccount(a.index, !a.hidden), false)}>{a.hidden ? "Show" : "Hide"}</button>}
           </div>
-          : <button type="button" key={a.index} className="row" style={{ width: "100%", textAlign: "left", opacity: a.hidden ? .55 : 1 }} onClick={() => a.index === active.selected ? onClose() : void run("Opening account…", () => wallet.selectAccount(a.index))}>
-            <Avatar account={asAccount(active, a.index)} large />
-            <div className="main"><b>{a.label}</b><small className="num">{short(a.evm)} · {short(a.solana)}</small></div>
-            <div className="end">{a.index === active.selected ? <small style={{ color: "var(--positive)" }}><Check size={13} style={{ verticalAlign: -2 }} /> Open</small> : a.hidden ? <small>Hidden</small> : null}</div>
-          </button>)}</div>
+          : <div key={a.index} className="row" style={{ opacity: a.hidden ? .55 : 1 }}>
+            <button type="button" className="row" style={{ flex: 1, textAlign: "left", padding: 0, background: "none", border: 0, minWidth: 0 }} aria-label={`Open ${a.label}`}
+              onClick={() => a.index === active.selected ? onClose() : void run("Opening account…", async () => { await wallet.selectAccount(a.index); onSwitched(a.label, a.evm); })}>
+              <Avatar account={asAccount(active, a.index)} large />
+              <div className="main"><b>{a.label}</b><small className="num">{short(a.evm)} · {short(a.solana)}</small></div>
+              <div className="end" style={{ textAlign: "right" }}>
+                {totals[a.evm] !== undefined && <b className="num" style={{ fontSize: 13 }}>{totals[a.evm] === "loading" ? "…" : totals[a.evm] === null ? "—" : usd(totals[a.evm] as number)}</b>}
+                {a.index === active.selected ? <small style={{ color: "var(--positive)", display: "block" }}><Check size={13} style={{ verticalAlign: -2 }} /> Open</small> : a.hidden ? <small style={{ display: "block" }}>Hidden</small> : null}
+              </div>
+            </button>
+            {totals[a.evm] === undefined && <button type="button" className="chip" style={{ fontSize: 11, padding: "2px 8px" }} aria-label={`Show ${a.label}'s balance`} onClick={() => loadTotal(a)}>Balance</button>}
+            <button type="button" className="icon-btn" aria-label={`Copy ${a.label}'s EVM address`} title="Copy EVM address" onClick={() => void copyAddress(a.evm)}>{copied === a.evm ? <Check size={15} /> : <Copy size={15} />}</button>
+          </div>)}</div>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", margin: "8px 2px" }}>
           <button type="button" className="link-btn" style={{ fontSize: 12 }} disabled={!!busy} onClick={() => void run("Adding an account…", () => wallet.addAccount())}>+ New account from this phrase</button>
           {hiddenCount > 0 && <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setShowHidden(s => !s)}>{showHidden ? "Hide hidden" : `Show hidden (${hiddenCount})`}</button>}
@@ -210,6 +232,12 @@ function ActivityView({ onTab }: { onTab: (t: DockTab) => void }) {
   </div>;
 }
 
+/** Which account a site was connected with, by name ("Wallet · Account 2"), or its short address if it's in no wallet here. */
+function accountNamed(snap: wallet.WalletSnapshot, evm: string) {
+  for (const w of snap.accounts) for (const a of w.accounts) if (a.evm.toLowerCase() === evm.toLowerCase()) return w.accounts.length > 1 || snap.accounts.length > 1 ? `${w.label} · ${a.label}` : a.label;
+  return short(evm);
+}
+
 function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: wallet.WalletSnapshot; mode: "popup" | "panel" | "tab"; go: (v: View) => void; onTab: (t: DockTab) => void; toast: (t: string) => void; onChanged: () => void }) {
   const [prefs, setPrefs] = useState<Settings | null>(null);
   const [connected, setConnected] = useState<SitePermission[]>([]);
@@ -249,7 +277,7 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
       {connected.length === 0 ? <div className="card empty" style={{ padding: 16 }}>No site is connected. Sites ask first, and you choose.</div>
         : <div className="card rows">{connected.map(s => <div key={s.origin} className="row">
           <span className="favicon" style={{ width: 32, height: 32, borderRadius: 9, background: "var(--surface-3)", display: "grid", placeItems: "center", fontWeight: 700 }}>{new URL(s.origin).hostname[0]!.toUpperCase()}</span>
-          <div className="main"><b>{new URL(s.origin).host}</b><small className="num">{short(s.evm)} · since {new Date(s.connectedAt).toLocaleDateString()}</small></div>
+          <div className="main"><b>{new URL(s.origin).host}</b><small className="num">{accountNamed(snap, s.evm)} · since {new Date(s.connectedAt).toLocaleDateString()}</small></div>
           <button type="button" className="chip" onClick={async () => { await siteStore.revoke(s.origin); await activityLog.add({ kind: "revoke", text: "Disconnected a site", site: s.origin }); await wallet.announce(); setConnected(await siteStore.all()); toast("Disconnected"); }}>Disconnect</button>
         </div>)}</div>}
       <div className="section-head"><h2>Wallet</h2></div>

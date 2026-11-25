@@ -17,6 +17,7 @@
     { "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_start", "all_frames": false }
   ],
   "permissions": ["storage", "alarms", "sidePanel", "clipboardWrite", "offscreen"],
+  "optional_permissions": ["clipboardRead"],
   "host_permissions": ["https://api.maxxing.ad/*", "https://api.relay.link/*"],
   "content_security_policy": {
     "extension_pages": "set by scripts/build.mjs: connect-src lists the chain registry's public RPC origins, the MAXXING API, Relay and the blocklist"

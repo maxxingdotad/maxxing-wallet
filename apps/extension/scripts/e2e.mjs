@@ -12,7 +12,7 @@
  */
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,7 +21,16 @@ import nacl from "tweetnacl";
 import bs58 from "bs58";
 
 const here = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const dist = resolve(here, "dist/chrome");
+// The built extension, copied with one change: clipboardRead, which the real one asks for (optional) the first time a secret is
+// copied, is granted up front, because a headless browser can't click the permission prompt. Nothing else differs.
+const dist = mkdtempSync(join(tmpdir(), "maxxing-e2e-ext-"));
+cpSync(resolve(here, "dist/chrome"), dist, { recursive: true });
+{
+  const manifest = JSON.parse(readFileSync(join(dist, "manifest.json"), "utf8"));
+  manifest.permissions = [...manifest.permissions, ...manifest.optional_permissions];
+  delete manifest.optional_permissions;
+  writeFileSync(join(dist, "manifest.json"), JSON.stringify(manifest, null, 2));
+}
 const shots = resolve(process.argv[2] ?? join(tmpdir(), "maxxing-extension-e2e"));
 mkdirSync(shots, { recursive: true });
 const CHROME = process.env.CHROME ?? (process.platform === "win32" ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
@@ -65,7 +74,8 @@ async function attach(targetId, size) {
     await send("Page.captureScreenshot", { format: "png" }, sessionId).then(({ data }) => writeFileSync(join(shots, `failed-${Date.now()}.png`), Buffer.from(data, "base64"))).catch(() => {});
     throw new Error(`Timed out waiting for: ${expression}\n--- page shows ---\n${text}`);
   };
-  const shot = async (name) => { await sleep(500); const { data } = await send("Page.captureScreenshot", { format: "png" }, sessionId); writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64")); };
+  // Past the approve buttons' arming delay (750 ms), so screenshots show them as the user can use them.
+  const shot = async (name) => { await sleep(1000); const { data } = await send("Page.captureScreenshot", { format: "png" }, sessionId); writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64")); };
   const click = (text) => evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(b => b.textContent.trim().startsWith(${JSON.stringify(text)}) && !b.disabled); if (!b) return false; b.click(); return true; })()`);
   const clickWhenReady = async (text, timeout) => { await waitFor(`[...document.querySelectorAll("button")].some(b => b.textContent.trim().startsWith(${JSON.stringify(text)}) && !b.disabled)`, timeout); await click(text); };
   const typePin = async (pin) => { for (const d of pin) { await clickWhenReady(d); await sleep(40); } };
@@ -137,9 +147,17 @@ try {
   const pill = await popup.evaluate(`document.querySelector(".account-pill b").textContent`);
   check("a second account from the same phrase opens", pill === "Account 2", pill);
   await popup.evaluate(`document.querySelector(".account-pill").click()`);
-  await popup.waitFor(`document.querySelectorAll(".sheet .row").length >= 2`);
+  await popup.waitFor(`document.querySelectorAll('.sheet button[aria-label^="Open "]').length >= 2`);
+  // The open account's balance shows at once; another account's only when tapped (the wallet doesn't look up every address
+  // together). Each account has its own copy-address button.
+  const balances = `[...document.querySelectorAll('.sheet button[aria-label^="Open "] .end b')].map(b => b.textContent)`;
+  await popup.waitFor(`${balances}.length === 1 && ${balances}[0] !== "…"`, 60000);
+  const waitingForTap = await popup.evaluate(`document.querySelectorAll('.sheet button[aria-label^="Show "]').length`);
+  await popup.evaluate(`document.querySelector('.sheet button[aria-label^="Show "]').click()`);
+  await popup.waitFor(`${balances}.length === 2 && ${balances}.every(t => /^\\$|^—$/.test(t))`, 60000);
+  check("account balances: the open one at once, others only when tapped; a copy button each", waitingForTap === 1 && await popup.evaluate(`document.querySelectorAll('.sheet button[aria-label^="Copy "]').length >= 2`), `${waitingForTap} waiting for a tap`);
   await popup.shot("09-accounts");
-  await popup.evaluate(`[...document.querySelectorAll(".sheet .row")][0].click()`);
+  await popup.evaluate(`document.querySelectorAll('.sheet button[aria-label^="Open "]')[0].click()`);
   await popup.waitFor(`!document.querySelector(".sheet")`, 30000);
 
   // ── A site: connect and sign, EVM then Solana ────────────────────────────────────────────────────────────────────────
@@ -212,8 +230,8 @@ try {
   check("declining answers the site with code 4001", !declined.ok && declined.code === 4001, `${declined.code}`);
 
   // ── Settings and export ─────────────────────────────────────────────────────────────────────────────────────────────
-  await popup.evaluate(`location.reload()`);
-  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
+  await popup.evaluate(`window.__beforeReload = true; location.reload()`);
+  await popup.waitFor(`!window.__beforeReload && !!document.querySelector('[aria-label="Settings"]')`, 30000);
   await popup.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
   await popup.waitFor(`document.body.innerText.includes("Connected sites")`);
   await popup.shot("15-settings");
@@ -250,6 +268,16 @@ try {
   const after = await probe.evaluate(`navigator.clipboard.readText().catch(e => "unreadable: " + e.message)`);
   const copiedKey = /^0x[0-9a-f]{64}$/.test(copied) || /^[1-9A-HJ-NP-Za-km-z]{80,90}$/.test(copied);
   check("a copied private key is cleared from the clipboard by the background", copiedKey && after === "", copiedKey ? `then ${JSON.stringify(after.slice(0, 40))}` : `copy didn't land: ${copied.slice(0, 60)}`);
+
+  // Something the user copied after the secret is left alone: the background clears only what still matches the secret's hash.
+  await probe.evaluate(`location.href = ${JSON.stringify(`${base}/popup.html`)}`).catch(() => {});
+  await probe.waitFor(`document.body.innerText.includes("Tokens") || document.body.innerText.includes("Unlock")`, 30000);
+  await probe.evaluate(`chrome.runtime.sendMessage({ type: "clear-clipboard-later", seconds: 60, hash: "${"0".repeat(64)}" })`);
+  await probe.evaluate(`navigator.clipboard.writeText("the user's own text")`);
+  await probe.evaluate(`chrome.alarms.create("clipboard-clear", { when: Date.now() + 300 })`);
+  await sleep(3000);
+  const kept = await probe.evaluate(`navigator.clipboard.readText().catch(e => "unreadable: " + e.message)`);
+  check("text copied after the secret stays in the clipboard", kept === "the user's own text", JSON.stringify(kept.slice(0, 40)));
 } catch (error) {
   check("run", false, error.message);
 } finally {
@@ -258,6 +286,7 @@ try {
   server.close();
   await sleep(500);
   rmSync(profile, { recursive: true, force: true });
+  rmSync(dist, { recursive: true, force: true });
   const failed = results.filter(r => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} passed. Screenshots: ${shots}`);
   process.exit(failed.length ? 1 : 0);

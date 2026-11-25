@@ -1,0 +1,5 @@
+public_suffix_list.dat is the Public Suffix List, https://publicsuffix.org/list/public_suffix_list.dat, licensed under the
+Mozilla Public License, Version 2.0: https://mozilla.org/MPL/2.0/
+
+Changes: the rules are kept as published, with the list's license header; its comments are left out.
+The MAXXING Wallet extension uses it to show which registrable domain a site belongs to.

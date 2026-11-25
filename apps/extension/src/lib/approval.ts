@@ -6,7 +6,7 @@
 import * as wallet from "./wallet";
 import { encode, decode } from "./codec";
 import { ERRORS, type Pending, type TabAnswer } from "./protocol";
-import { activity, declines, grantedTo, sites } from "./store";
+import { activity, declines, grantedTo, sites, trustedLookalikes } from "./store";
 
 export async function loadPending(id: string): Promise<Pending | null> {
   return ((await chrome.storage.session.get(`pending:${id}`))[`pending:${id}`] as Pending | undefined) ?? null;
@@ -38,10 +38,23 @@ export async function decline(pending: Pending) {
   await answer(pending, { ok: false, error: ERRORS.rejected });
 }
 
+/**
+ * The user says they know this look-alike site: turn the warning into the request it was holding. Nothing is remembered yet; the
+ * site is trusted only if the user then approves (approveConnect / approveSign). Declining or closing forgets it.
+ */
+export async function continueLookalike(pending: Pending): Promise<Pending> {
+  if (pending.kind !== "lookalike" || !pending.next) throw new Error("Nothing to continue.");
+  const next: Pending = { ...pending, kind: pending.next, passedLookalikeWarning: true };
+  delete next.next;
+  await chrome.storage.session.set({ [`pending:${pending.id}`]: next });
+  return next;
+}
+
 /** Connects the site to the open account. */
 export async function approveConnect(pending: Pending) {
   const open = wallet.snapshot().public;
   if (!open || !wallet.snapshot().unlocked) throw new Error("WALLET_LOCKED");
+  if (pending.passedLookalikeWarning) await trustedLookalikes.add(pending.origin);
   await sites.grant(pending.origin, open);
   await activity.add({ kind: "connect", text: "Connected a site", site: pending.origin });
   await answer(pending, { ok: true, result: { evm: open.evm, solana: open.solana } });
@@ -61,6 +74,7 @@ export async function approveSign(pending: Pending, reviewed: { view: { title: s
   if (!grantedTo(await sites.get(pending.origin), wallet.snapshot().public)) { await answer(pending, { ok: false, error: ERRORS.otherAccount }); return; }
   const method = pending.method as Exclude<Pending["method"], "connect">;
   const result = await wallet.sign(method, decode(pending.params) as any, reviewed.signed);
+  if (pending.passedLookalikeWarning) await trustedLookalikes.add(pending.origin);
   await sites.touch(pending.origin);
   await activity.add({ kind: "sign", text: reviewed.view.title, site: pending.origin });
   await answer(pending, { ok: true, result });

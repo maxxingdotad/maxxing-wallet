@@ -37,6 +37,12 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   const toAssets = useMemo(() => all.flatMap(assetsOn), [all]);
   const from = fromAssets.find(x => key(x.asset) === fromKey) ?? null;
   const to = toAssets.find(a => key(a) === toKey) ?? null;
+  // Paying with a token: the network fee can come out of the swap (gasless), on by default when there's no coin for gas there.
+  const canGasless = !!from && from.asset.address !== null;
+  const hasGasCoin = !!from && (holdings ?? []).some(h => h.networkId === from.asset.network.networkId && !h.address);
+  const [gaslessChoice, setGaslessChoice] = useState<boolean | null>(null);
+  const gasless = canGasless && (gaslessChoice ?? !hasGasCoin);
+  useEffect(() => setGaslessChoice(null), [fromKey]);
 
   // A fresh quote as the inputs settle.
   useEffect(() => {
@@ -47,12 +53,12 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
       setQuoting(true);
       try {
         const amountRaw = parseUnits(amount, from.asset.decimals);
-        const next = await quote({ from: from.asset, to, amountRaw, user: account.evm, recipient: to.network.family === "SOLANA" ? account.solana : account.evm });
+        const next = await quote({ from: from.asset, to, amountRaw, user: account.evm, recipient: to.network.family === "SOLANA" ? account.solana : account.evm, gasless });
         if (live) setQ(next);
       } catch (e) { if (live) setError(message(e)); } finally { if (live) setQuoting(false); }
     }, 450);
     return () => { live = false; clearTimeout(t); };
-  }, [fromKey, toKey, amount]);
+  }, [fromKey, toKey, amount, gasless]);
 
   // The exact transactions to sign, checked against Relay's contracts, with fees set here.
   useEffect(() => {
@@ -76,8 +82,9 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
 
   if (reviewing && q && from && to) {
     if (!prepared && !prepareError) return <div className="popup"><div className="backdrop" /><PageHead title="Review swap" onBack={() => setReviewing(false)} /><Busy text="Checking the route and its fees…" /></div>;
-    const txs = prepared?.txs ?? [];
+    const steps = prepared?.steps ?? [];
     const reviewError = prepareError;
+    const what = prepared?.gasless ? `${steps.length} authorization${steps.length === 1 ? "" : "s"} you'll sign` : `${steps.length} step${steps.length === 1 ? "" : "s"} you'll sign`;
     return <div className="popup"><div className="backdrop" />
       <PageHead title="Review swap" onBack={() => setReviewing(false)} />
       <div className="scroll stack" style={{ paddingBottom: 130 }}>
@@ -88,16 +95,26 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
           <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to.symbol}</b></div>
           <div className="fact"><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--positive)" }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
           <div className="fact"><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
-          {prepared && <div className="fact"><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>}
+          {prepared && (prepared.gasless
+            ? <div className="fact"><span>Network fee</span><b>Paid from the swap · no {prepared.nativeSymbol} needed</b></div>
+            : <div className="fact"><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
           {q.timeSeconds && <div className="fact"><span>Arrives in</span><b>~ {q.timeSeconds} s</b></div>}
         </div>
-        <div className="section-head"><h2>{txs.length} transaction{txs.length === 1 ? "" : "s"} you'll sign</h2></div>
-        {txs.map((t, i) => <div key={i} className="card" style={{ padding: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i + 1}. {t.summary.tokenCall?.text ?? t.label}</div>
-          <div style={{ fontSize: 12, color: "var(--muted)" }}>{t.summary.network} · sends {t.summary.amount} · to {t.transaction.to?.slice(0, 8)}…{t.transaction.to?.slice(-6)} ({t.transaction.data?.startsWith("0x095ea7b3") ? "your token, letting only a Relay contract spend it" : "a Relay contract"}) · fee at most {Number(formatUnits(t.maxFee, 18)).toPrecision(3)}</div>
-          {t.summary.tokenCall?.warning && <div className="alert warn" style={{ marginTop: 8 }}><AlertTriangle size={15} /><span>{t.summary.tokenCall.warning}</span></div>}
-        </div>)}
-        <p style={{ fontSize: 11.5, color: "var(--muted)", margin: 0 }}>You pay the network fee in {from.asset.network.nativeSymbol}. Paying fees with the token you hold comes with gasless trading.</p>
+        <div className="section-head"><h2>{what}</h2></div>
+        {steps.map((s, i) => s.kind === "signature"
+          ? <div key={i} className="card" style={{ padding: 12 }} data-testid="gasless-step">
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i + 1}. {s.label}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{s.text}</div>
+              <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 4 }}>{s.summary.kind} · {s.summary.app ?? "token"} · {s.summary.network ?? ""}</div>
+            </div>
+          : <div key={i} className="card" style={{ padding: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i + 1}. {s.summary.tokenCall?.text ?? s.label}</div>
+              <div style={{ fontSize: 12, color: "var(--muted)" }}>{s.summary.network} · sends {s.summary.amount} · to {s.transaction.to?.slice(0, 8)}…{s.transaction.to?.slice(-6)} ({s.transaction.data?.startsWith("0x095ea7b3") ? "your token, letting only a Relay contract spend it" : "a Relay contract"}) · fee at most {Number(formatUnits(s.maxFee, 18)).toPrecision(3)}</div>
+              {s.summary.tokenCall?.warning && <div className="alert warn" style={{ marginTop: 8 }}><AlertTriangle size={15} /><span>{s.summary.tokenCall.warning}</span></div>}
+            </div>)}
+        <p style={{ fontSize: 11.5, color: "var(--muted)", margin: 0 }}>{prepared?.gasless
+          ? "Gasless: you sign an authorization for exactly this amount; Relay sends the transaction and takes the network fee out of the swap."
+          : `You pay the network fee in ${from.asset.network.nativeSymbol}.`}</p>
         {(reviewError || error) && <div className="alert danger" role="alert">{reviewError || error}</div>}
       </div>
       <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><div className="btn-row"><button type="button" className="btn secondary" onClick={() => setReviewing(false)}>Back</button><button type="button" className="btn primary" disabled={!!reviewError || !prepared} onClick={async () => {
@@ -148,6 +165,10 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
           <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to?.symbol}</b></div>
           <div className="fact"><span>Fees</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
         </div>}
+        {canGasless && from && <label className="card" style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, marginTop: 8, fontSize: 13, cursor: "pointer" }} data-testid="gasless-toggle">
+          <input type="checkbox" checked={gasless} onChange={e => setGaslessChoice(e.target.checked)} />
+          <span><b>Pay the network fee with {from.asset.symbol}</b><br /><small style={{ color: "var(--muted)" }}>{hasGasCoin ? `No ${from.asset.network.nativeSymbol} spent: the fee comes out of the swap.` : `You have no ${from.asset.network.nativeSymbol} on ${from.asset.network.name}: the fee comes out of the swap.`}</small></span>
+        </label>}
         {!fromAssets.length && <div className="card empty" style={{ marginTop: 8 }}>Swaps start from a token on an EVM chain. Receive some first; Solana as the source comes next.</div>}
         {error && <div className="alert danger" role="alert" style={{ marginTop: 8 }}>{error}</div>}      </>}
     </div>

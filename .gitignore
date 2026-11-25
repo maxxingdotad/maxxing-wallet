@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Store packages and screenshots made by apps/extension/scripts/package.mjs and store-shots.mjs
+apps/extension/store/out/
 *.tgz
 .DS_Store
 

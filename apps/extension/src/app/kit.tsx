@@ -55,11 +55,25 @@ export function Busy({ text }: { text: string }) { return <div className="busy" 
  */
 export const canClearClipboard = () => typeof chrome !== "undefined" && !!chrome.offscreen;
 
-/** Copies. For a secret (`clearAfter`), the background empties the clipboard after that many seconds. */
+/** SHA-256 of a text, hex: what the background keeps to recognise a copied secret without holding it. */
+export async function sha256(text: string) {
+  return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)))].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+/**
+ * Copies. For a secret (`clearAfter`), the background empties the clipboard after that many seconds, but only if it still holds
+ * this secret (it compares a hash), so whatever the user copied since is left alone. Checking needs the clipboard-read
+ * permission, asked for here the first time (not at install); without it, secrets aren't copied.
+ */
 export async function copy(text: string, clearAfter?: number) {
-  if (clearAfter && !canClearClipboard()) throw new Error("This browser can't clear the clipboard afterwards, so secrets aren't copied.");
+  if (clearAfter) {
+    if (!canClearClipboard()) throw new Error("This browser can't clear the clipboard afterwards, so secrets aren't copied.");
+    const want = { permissions: ["clipboardRead" as const] };
+    const allowed = await chrome.permissions.contains(want).catch(() => false) || await chrome.permissions.request(want).catch(() => false);
+    if (!allowed) throw new Error("To copy a secret, allow MAXXING Wallet to check the clipboard: it clears the secret after 60 seconds if it's still there.");
+  }
   await navigator.clipboard.writeText(text);
-  if (clearAfter) await chrome.runtime.sendMessage({ type: "clear-clipboard-later", seconds: clearAfter }).catch(() => {});
+  if (clearAfter) await chrome.runtime.sendMessage({ type: "clear-clipboard-later", seconds: clearAfter, hash: await sha256(text) }).catch(() => {});
 }
 
 export function useToast(): [ReactNode, (text: string) => void] {

@@ -6,8 +6,11 @@
  */
 import { SDK_CHAINS, browserRpcUrls } from "@maxxing/wallet-sdk";
 
-/** The services besides chain RPC (balances.ts API_URL, relay.ts RELAY_API, blocklist.ts BLOCKLIST_SOURCE; a test keeps them equal). */
-export const SERVICES = ["https://api.maxxing.ad", "https://api.relay.link", "https://polkadot.js.org"];
+/**
+ * The services besides chain RPC (balances.ts API_URL, relay.ts RELAY_API, blocklist.ts BLOCKLIST_SOURCE, psl.ts PSL_SOURCE; a test
+ * keeps them equal).
+ */
+export const SERVICES = ["https://api.maxxing.ad", "https://api.relay.link", "https://polkadot.js.org", "https://publicsuffix.org"];
 
 export function connectOrigins(): string[] {
   const origins = new Set<string>(SERVICES);

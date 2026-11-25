@@ -85,3 +85,6 @@ jobs:
           CHROME: google-chrome
       - name: File hashes
         run: cd apps/extension/dist && find . -type f | sort | xargs sha256sum
+      # The store packages (Chrome and Edge, Firefox, and the source AMO asks for), reproducible: same commit, same zips.
+      - name: Store packages
+        run: node apps/extension/scripts/package.mjs

@@ -4,12 +4,13 @@ import { AlertTriangle, BadgeCheck, Eye, Link2, PenLine, ShieldAlert } from "luc
 import "./ui/styles.css";
 import type { ApprovalView } from "@maxxing/wallet-core/request-view";
 import { Avatar, SafetyScore, short } from "./ui/parts";
-import { PhishingBlocked } from "./ui/screens/Blocked";
+import { LookalikeWarning, PhishingBlocked } from "./ui/screens/Blocked";
+import { suffixRules, type SuffixRules } from "./lib/psl";
 import { Busy, PinPad, message } from "./app/kit";
 import * as wallet from "./lib/wallet";
 import * as approval from "./lib/approval";
 import { ERRORS, LIMITS, type Pending } from "./lib/protocol";
-import { siteName } from "./lib/site";
+import { siteName, type SiteName } from "./lib/site";
 import { sites } from "./lib/store";
 
 /**
@@ -40,8 +41,7 @@ function useArmed(screen: string) {
   return armed;
 }
 
-function SiteCard({ origin, known }: { origin: string; known: boolean }) {
-  const name = siteName(origin);
+function SiteCard({ name, known }: { name: SiteName; known: boolean }) {
   return <div className="card site">
     <span className="favicon">{name.domain[0]!.toUpperCase()}</span>
     <div style={{ minWidth: 0 }}>
@@ -61,10 +61,13 @@ function Approve() {
   const [error, setError] = useState(""), [waitUntil, setWaitUntil] = useState(0);
   const [busy, setBusy] = useState(false);
   const [signReview, setSignReview] = useState<Awaited<ReturnType<typeof approval.reviewSign>> | null>(null);
+  const [rules, setRules] = useState<SuffixRules | null>(null);
   const unlocked = !!snap?.unlocked && !!snap.public;
-  const armed = useArmed(`${pending?.kind}:${unlocked}`);
+  // The buttons re-arm whenever what they act on changes: the screen, the unlock, and the review once it has loaded.
+  const armed = useArmed(`${pending?.kind}:${unlocked}:${signReview ? "reviewed" : "reading"}`);
   useEffect(() => {
     void (async () => {
+      setRules(await suffixRules());
       const p = await approval.loadPending(id);
       setPending(p);
       if (p) setKnown(Boolean(await sites.get(p.origin)));
@@ -73,21 +76,22 @@ function Approve() {
     })();
   }, []);
   useEffect(() => { if (pending?.kind === "sign" && unlocked) void approval.reviewSign(pending).then(setSignReview); }, [pending, unlocked, snap?.public?.evm]);
-  if (pending === undefined || !snap) return <div className="popup"><div className="backdrop" /><Busy text="Opening the request…" /></div>;
+  if (pending === undefined || !snap || !rules) return <div className="popup"><div className="backdrop" /><Busy text="Opening the request…" /></div>;
   if (pending === null) return <div className="popup"><div className="backdrop" /><div className="scroll" style={{ paddingTop: 40 }}><div className="card empty">This request is no longer waiting. You can close this window.</div></div><div className="footer"><button type="button" className="btn primary" onClick={() => window.close()}>Close</button></div></div>;
-  const name = siteName(pending.origin);
+  const name = siteName(pending.origin, rules);
   const close = async (run: () => Promise<void>) => { await run(); window.close(); };
+  const closeSite = (run: () => Promise<void>) => close(async () => { await chrome.tabs.remove(pending.tabId).catch(() => {}); await run(); });
 
-  // A blocked site: this screen is the only way on. Closing the site, or closing this window; nothing reaches the wallet.
-  if (pending.kind === "blocked") return <div style={{ position: "relative" }}>
-    <PhishingBlocked host={name.host} lookalike="maxxing.ad" />
-    <div style={{ position: "absolute", left: 16, right: 16, bottom: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-      <button type="button" className="btn primary" onClick={() => close(async () => { await chrome.tabs.remove(pending.tabId).catch(() => {}); await approval.clearPending(pending); })}>Close that site</button>
-      <button type="button" className="btn ghost" style={{ fontSize: 12, height: 32, color: "var(--dim)" }} onClick={() => close(() => approval.clearPending(pending))}>Keep it open (it stays blocked)</button>
-    </div>
-  </div>;
+  // A known scam: this screen is the only way on. Closing the site, or closing this window; nothing reaches the wallet.
+  if (pending.kind === "blocked") return <PhishingBlocked host={name.host} domain={name.domain}
+    onLeave={() => closeSite(() => approval.clearPending(pending))} onKeep={() => close(() => approval.clearPending(pending))} />;
 
-  const site = <SiteCard origin={pending.origin} known={known} />;
+  // A name that reads as MAXXING: warn first; the request goes on only if the user says they know the site.
+  if (pending.kind === "lookalike") return <LookalikeWarning host={name.host} domain={name.domain} unicode={name.unicode}
+    onLeave={() => closeSite(() => approval.decline(pending))}
+    onContinue={async () => { setPending(await approval.continueLookalike(pending)); }} />;
+
+  const site = <SiteCard name={name} known={known} />;
   const decline = () => close(() => approval.decline(pending));
 
   if (!unlocked) {

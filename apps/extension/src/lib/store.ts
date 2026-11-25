@@ -72,8 +72,11 @@ export const sites = {
     return { ...all, [origin]: { origin, evm: connection.evm, solana: connection.solana, connectedAt: all[origin]?.connectedAt ?? now, lastUsedAt: now } };
   }),
   touch: (origin: string) => kept.update<Record<string, SitePermission>>("sites", {}, all => all[origin] ? { ...all, [origin]: { ...all[origin]!, lastUsedAt: Date.now() } } : all),
-  revoke: (origin: string) => kept.update<Record<string, SitePermission>>("sites", {}, all => { const next = { ...all }; delete next[origin]; return next; }),
-  clear: () => kept.set("sites", {}),
+  revoke: async (origin: string) => {
+    await kept.update<Record<string, SitePermission>>("sites", {}, all => { const next = { ...all }; delete next[origin]; return next; });
+    await kept.update<string[]>("trusted-lookalikes", [], all => all.filter(o => o !== origin));
+  },
+  clear: async () => { await kept.set("sites", {}); await kept.set("trusted-lookalikes", []); },
 };
 /** A site may act for the open account only if that is the account it was connected with. */
 export const grantedTo = (permission: SitePermission | null, open: Connection | null): open is Connection =>
@@ -83,6 +86,16 @@ const MAX_ACTIVITY = 200;
 export const activity = {
   all: () => kept.get<Activity[]>("activity", []),
   add: (entry: Omit<Activity, "at">) => kept.update<Activity[]>("activity", [], all => [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),
+  /** Adds the entry unless the same kind of entry for the same site was added within `ms` (so a site can't flood the list). */
+  addUnlessRecent: (entry: Omit<Activity, "at">, ms: number) => kept.update<Activity[]>("activity", [], all =>
+    all.some(a => a.kind === entry.kind && a.site === entry.site && Date.now() - a.at < ms) ? all : [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),
+};
+
+/** Sites whose name reads as MAXXING that the user said they know, after the warning. Disconnecting a site forgets it too. */
+export const trustedLookalikes = {
+  has: async (origin: string) => (await kept.get<string[]>("trusted-lookalikes", [])).includes(origin),
+  add: (origin: string) => kept.update<string[]>("trusted-lookalikes", [], all => all.includes(origin) ? all : [...all, origin]),
+  remove: (origin: string) => kept.update<string[]>("trusted-lookalikes", [], all => all.filter(o => o !== origin)),
 };
 
 // ── Until the browser closes: chrome.storage.session ───────────────────────────────────────────────────────────────────────

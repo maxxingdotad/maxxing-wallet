@@ -7,7 +7,7 @@ import { AccountsSheet } from "../ui/screens/Accounts";
 import { Swap } from "../ui/screens/Swap";
 import { ApproveTransaction } from "../ui/screens/Approve";
 import { ExportReveal, ExportWarning } from "../ui/screens/Export";
-import { PhishingBlocked } from "../ui/screens/Blocked";
+import { LookalikeWarning, PhishingBlocked } from "../ui/screens/Blocked";
 import { ACCOUNTS, CHAINS, HOLDINGS } from "./sample";
 
 /**
@@ -23,7 +23,8 @@ const SCREENS: { id: string; label: string; render: () => ReactNode }[] = [
   { id: "export-warning", label: "6 · Export: warning", render: () => <ExportWarning /> },
   { id: "export-reveal", label: "7 · Export: hold to reveal", render: () => <ExportReveal /> },
   { id: "export-shown", label: "8 · Export: shown, auto-hides", render: () => <ExportReveal revealed /> },
-  { id: "phishing", label: "9 · Phishing site blocked", render: () => <PhishingBlocked host="maxxing-airdrop.claims" lookalike="maxxing.ad" /> },
+  { id: "phishing", label: "9 · Known scam blocked", render: () => <PhishingBlocked host="claim.wallet-drainer.example" domain="wallet-drainer.example" onLeave={() => {}} onKeep={() => {}} /> },
+  { id: "lookalike", label: "10 · Look-alike name warning", render: () => <LookalikeWarning host="maxxing-airdrop.claims" domain="maxxing-airdrop.claims" unicode={null} onLeave={() => {}} onContinue={() => {}} /> },
 ];
 
 const one = new URLSearchParams(location.search).get("screen");

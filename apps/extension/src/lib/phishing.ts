@@ -1,15 +1,17 @@
 /**
  * Which sites the wallet stops before they can ask for anything. Both checks run on this device:
  * - a blocklist of known crypto phishing hosts and their subdomains: shipped with the extension (public/phishing/hosts.txt, from
- *   the polkadot.js phishing list, Apache-2.0) and refreshed by the background twice a day;
- * - sites made to look like MAXXING: the host is decoded from punycode, letters that look alike (Cyrillic and Greek letters,
- *   digits, "rn" for "m") are folded to one spelling, and anything that then reads "maxxing", or one letter away from it, is
- *   stopped unless it is on maxxing.ad itself.
+ *   a public phishing blocklist, Apache-2.0, see public/phishing/NOTICE) and refreshed by the background twice a day;
+ * - sites whose name reads as MAXXING: the host is decoded from punycode, letters that look alike (Cyrillic and Greek letters,
+ *   digits, "rn" for "m") are folded to one spelling, and a name that then reads "maxxing" (see looksLikeMaxxing) gets a warning
+ *   the user can pass for a site they know, unless it is on maxxing.ad itself.
  */
+import { registrableLabel, type SuffixRules } from "./psl";
+
 const OFFICIAL_DOMAIN = "maxxing.ad";
 const TARGET = "maxxing";
 
-export type SiteVerdict = { kind: "ok" } | { kind: "phishing"; reason: "listed" | "lookalike"; looksLike?: string };
+export type SiteVerdict = { kind: "ok" } | { kind: "scam" } | { kind: "lookalike"; looksLike: string };
 
 // ── Punycode (RFC 3492), to read a host's xn-- labels as the letters a person sees ──────────────────────────────────────────
 function punycodeDecode(input: string): string {
@@ -78,23 +80,38 @@ function oneEditAway(a: string, b: string) {
 }
 
 const TARGET_SKELETON = skeleton(TARGET);
-/** True when a host reads as MAXXING to a person: "maxxing" anywhere, or a word one letter away from it. */
-export function looksLikeMaxxing(host: string): boolean {
+/**
+ * True when a host's name reads as MAXXING to a person:
+ * - any label, or any hyphen-separated word of one, that spells "maxxing" once look-alike letters are folded ("maxxing.ad.evil.io",
+ *   "claim-maxxing.net", "m-a-x-x-i-n-g.net", "mаxxing.ad" with a Cyrillic а); a longer word that merely contains it, such as
+ *   "looksmaxxing", is someone else's name and passes;
+ * - or the registrable name itself (the "x" in x.co.uk) one letter away from it ("maxxlng", "rnaxxing", "maxing").
+ */
+export function looksLikeMaxxing(host: string, rules?: SuffixRules): boolean {
   const unicode = unicodeHost(host);
-  if (skeleton(unicode).includes(TARGET_SKELETON)) return true;
-  return unicode.split(/[.\-_]/).some(word => { const s = skeleton(word); return s.length >= 5 && oneEditAway(s, TARGET_SKELETON); });
+  for (const label of unicode.split(".")) {
+    if (skeleton(label) === TARGET_SKELETON) return true;
+    if (label.split(/[-_]/).some(word => skeleton(word) === TARGET_SKELETON)) return true;
+  }
+  const name = rules ? registrableLabel(host, rules) : host.split(".").at(-2) ?? host;
+  const s = skeleton(unicodeHost(name));
+  return s.length >= 5 && oneEditAway(s, TARGET_SKELETON);
 }
 
 /** Normalises a list entry or a host: lower case, no trailing dot, no wildcard. */
 export const normalHost = (entry: string) => entry.trim().toLowerCase().replace(/^\*\./, "").replace(/\.$/, "");
 
-export function checkSite(origin: string, listed: ReadonlySet<string> = new Set()): SiteVerdict {
+/**
+ * - "scam": on the blocklist. Blocked outright; the site gets nothing.
+ * - "lookalike": its name reads as MAXXING but it isn't maxxing.ad. A warning the user can pass, carefully, for a site they know.
+ */
+export function checkSite(origin: string, listed: ReadonlySet<string> = new Set(), rules?: SuffixRules): SiteVerdict {
   let host: string;
   try { host = normalHost(new URL(origin).hostname); } catch { return { kind: "ok" }; }
   if (host === OFFICIAL_DOMAIN || host.endsWith(`.${OFFICIAL_DOMAIN}`) || host === "localhost" || host === "127.0.0.1") return { kind: "ok" };
   const parts = host.split(".");
-  for (let i = 0; i < parts.length - 1; i++) if (listed.has(parts.slice(i).join("."))) return { kind: "phishing", reason: "listed" };
-  if (looksLikeMaxxing(host)) return { kind: "phishing", reason: "lookalike", looksLike: OFFICIAL_DOMAIN };
+  for (let i = 0; i < parts.length - 1; i++) if (listed.has(parts.slice(i).join("."))) return { kind: "scam" };
+  if (looksLikeMaxxing(host, rules)) return { kind: "lookalike", looksLike: OFFICIAL_DOMAIN };
   return { kind: "ok" };
 }
 

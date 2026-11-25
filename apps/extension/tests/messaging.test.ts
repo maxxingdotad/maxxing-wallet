@@ -1,5 +1,6 @@
 import { alarmFired, alarmsCreated, chromeData, localData, pageMessages, runtimeMessage, startup, tabSends, windowsCreated } from "./env";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { strict as assert } from "node:assert";
 
 /**
@@ -10,6 +11,7 @@ import { strict as assert } from "node:assert";
 globalThis.fetch = (async (input: string | URL) => {
   const url = String(input);
   if (url.endsWith("phishing/hosts.txt")) return new Response("evil.example\ndrainer.example\n");
+  if (url.endsWith("psl/public_suffix_list.dat")) return new Response(readFileSync(new URL("../public/psl/public_suffix_list.dat", import.meta.url), "utf8"));
   return new Response("{}", { status: 404 });
 }) as typeof fetch;
 
@@ -100,14 +102,53 @@ test("the background refuses what it must: unconnected, another account, floods,
   assert.deepEqual(await new Promise(r => backgroundListener({ type: "site-status" }, sender(7), r)), open);
 });
 
-test("phishing sites get one block screen per tab, and no addresses even if connected before", async () => {
+test("known scams: one block screen per tab, a few a minute, one Activity entry, and no addresses even if connected before", async () => {
   const before = windowsCreated.length;
-  assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.message, "MAXXING blocked this site: it's on the phishing list.");
-  assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.code, 4001);
-  assert.equal(windowsCreated.length, before + 1, "one block screen, not one per request");
-  assert.equal((await ask(request("connect"), sender(31, "https://rnaxxing.ad"))).error.code, 4001, "look-alikes too");
+  assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.message, "MAXXING blocked this site: it's on the phishing blocklist.");
+  assert.equal(windowsCreated.length, before + 1);
+  // "Keep the tab open": the screen closes, the site asks again; no new screen for that tab.
+  await approval.clearPending(await pendingOf(30));
+  for (let i = 0; i < 5; i++) assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.code, 4001);
+  assert.equal(windowsCreated.length, before + 1, "one block screen per tab, however often it asks");
+  // Other tabs: a few screens a minute at most.
+  for (let tab = 33; tab < 40; tab++) { await ask(request("connect"), sender(tab, "https://evil.example")); const p = await chrome.storage.session.get(`tab:${tab}`); if (p[`tab:${tab}`]) await approval.clearPending(await pendingOf(tab)); }
+  assert.equal(windowsCreated.length, before + 3);
+  assert.equal((await store.activity.all()).filter(a => a.kind === "blocked" && a.site === "https://evil.example").length, 1, "the Activity list notes it once");
   await store.sites.grant("https://drainer.example", wallet.snapshot().public!);
   assert.equal(await new Promise(r => backgroundListener({ type: "site-status" }, sender(32, "https://drainer.example"), r)), null);
+});
+
+test("a name that reads as MAXXING is warned first; going on is remembered, and disconnecting forgets it", async () => {
+  const LOOK = "https://maxxing-rewards.example";
+  assert.deepEqual(await ask(request("connect"), sender(70,LOOK)), { done: false });
+  let pending = await pendingOf(70);
+  assert.equal(pending.kind, "lookalike");
+  assert.equal(pending.next, "connect");
+  pending = await approval.continueLookalike(pending);
+  assert.equal(pending.kind, "connect");
+  assert.equal(await store.trustedLookalikes.has(LOOK), false, "going past the warning alone trusts nothing");
+  // Declined after the warning: nothing is remembered, and the next request warns again.
+  await approval.decline(pending);
+  assert.equal(await store.trustedLookalikes.has(LOOK), false);
+  await ask(request("connect"), sender(70, LOOK));
+  pending = await pendingOf(70);
+  assert.equal(pending.kind, "lookalike", "warned again after a decline");
+  pending = await approval.continueLookalike(pending);
+  await approval.approveConnect(pending);
+  assert.equal(await store.trustedLookalikes.has(LOOK), true, "trusted once the user approved");
+  assert.equal((tabSends.at(-1)!.message as any).ok, true);
+  // Known now: the next request goes straight to the approval window, without the warning.
+  await ask(request("evm.signMessage", { address: wallet.snapshot().public!.evm, message: "hi" }), sender(70,LOOK));
+  assert.equal((await pendingOf(70)).kind, "sign");
+  await approval.decline(await pendingOf(70));
+  await store.sites.revoke(LOOK);
+  await ask(request("connect"), sender(71,LOOK));
+  assert.equal((await pendingOf(71)).kind, "lookalike", "disconnecting forgets that the user knew it");
+  await approval.decline(await pendingOf(71));
+  // looksmaxxing-style names aren't MAXXING look-alikes at all.
+  await ask(request("connect"), sender(72,"https://looksmaxxing.com"));
+  assert.equal((await pendingOf(72)).kind, "connect");
+  await approval.decline(await pendingOf(72));
 });
 
 test("auto-lock: counts from the user's own input, forgets the session, stops telling sites, survives worker restarts", async () => {

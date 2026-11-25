@@ -30,7 +30,11 @@ export type TabAnswer = ({ type: "site-answer"; id: string; ok: true; result: un
 export type Pending = {
   id: string; /** The id the page's provider is waiting on. */ requestId: string; method: SiteMethod; params: unknown; origin: string;
   tabId: number; frameId: number; /** The page that asked; answers go to it alone. */ documentId?: string;
-  createdAt: number; windowId?: number; kind: "connect" | "sign" | "blocked";
+  createdAt: number; windowId?: number;
+  /** "blocked": a known scam, stopped. "lookalike": a name that reads as MAXXING, warned first; `next` is what follows if the user goes on. */
+  kind: "connect" | "sign" | "blocked" | "lookalike"; next?: "connect" | "sign";
+  /** The user went past the look-alike warning for this request; the site is trusted only if they approve it. */
+  passedLookalikeWarning?: boolean;
 };
 
 /** Limits on what a site can ask for. */
@@ -42,6 +46,10 @@ export const LIMITS = {
   declinesPerMinute: 3,
   /** And a backstop: approval windows one site may open per minute, approved or not. */
   windowsPerMinute: 20,
+  /** Block screens one listed site may cause per minute, across tabs. */
+  blockScreensPerMinute: 3,
+  /** How long the "continue anyway" on a look-alike warning waits after the box is ticked. */
+  lookalikeWaitMs: 3000,
   /** How long the approve buttons wait after the window shows or gets focus back, so a click meant for the site can't land on them. */
   armDelayMs: 750,
 } as const;
@@ -52,7 +60,7 @@ export const ERRORS = {
   unauthorized: { message: "Connect the wallet to this site first.", code: 4100 },
   otherAccount: { message: "This site was connected with another account. Connect it again to use this one.", code: 4100 },
   unsupported: { message: "This method isn't supported.", code: 4200 },
-  blocked: { message: "MAXXING blocked this site: it's on the phishing list.", code: 4001 },
+  blocked: { message: "MAXXING blocked this site: it's on the phishing blocklist.", code: 4001 },
   locked: { message: "The wallet is locked.", code: 4100 },
   busy: { message: "Another request from this site is already waiting in the MAXXING window.", code: 4001 },
   tooMany: { message: "Too many requests from this site. Wait a minute and try again.", code: 4001 },
