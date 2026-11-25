@@ -1,0 +1,16 @@
+{
+  "//": "How the wallet is served (security headers, vercel.json): Node-side files outside src/, typechecked on their own.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "strict": true,
+    "types": ["node"]
+  },
+  "include": ["hosting.ts", "web-security.ts", "tests/hosting.test.ts"]
+}

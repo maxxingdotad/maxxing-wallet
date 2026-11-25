@@ -2,6 +2,9 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
 import { BUILT_IN_APPS, parseFirstPartyApps, type WalletApp } from "./src/first-party";
+// The wallet keeps its own copy of the shared header helpers: it is also built from the public repository, without packages/.
+import { hostingPlugin } from "./web-security";
+import { checkVercelJson, cloudflareFile, pageFor, pageHeaders, PRODUCTION_ORIGINS, type Origins } from "./hosting";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -62,6 +65,7 @@ function policies(env: Record<string, string>, port: number, apps: WalletApp[] |
 const isWindowPage = (url = "") => /^\/(connect|apps|login)(\.html)?(\?|#|$)/.test(url);
 const isPreviewPage = (url = "") => /^\/preview(\.html)?(\?|#|$)/.test(url);
 
+/** The dev server's policies. Production builds (and `vite preview`) get hosting.ts's headers instead. */
 function pagePolicies(env: Record<string, string>, port: number, apps: WalletApp[] | null): Plugin {
   const { frame, window, preview } = policies(env, port, apps);
   const apply = (url: string | undefined, setHeader: (name: string, value: string) => void) => {
@@ -71,15 +75,39 @@ function pagePolicies(env: Record<string, string>, port: number, apps: WalletApp
   return {
     name: "maxxing-wallet-page-policies",
     configureServer(server) { server.middlewares.use((req, res, next) => { apply(req.url, (n, v) => res.setHeader(n, v)); next(); }); },
-    configurePreviewServer(server) { server.middlewares.use((req, res, next) => { apply(req.url, (n, v) => res.setHeader(n, v)); next(); }); },
   };
+}
+
+/**
+ * hosting.ts in the build: a production build stops when vercel.json drifted from it or when VITE_WALLET_APPS names other sites
+ * than the frame-ancestors vercel.json allows; it writes the Cloudflare `_headers`; `vite preview` serves the production headers
+ * with this build's addresses (the API and first-party sites it was built for).
+ */
+function production(env: Record<string, string>, apps: WalletApp[] | null): Plugin {
+  const local: Origins = {
+    api: new URL(env.VITE_API_URL || "http://localhost:4000").origin,
+    firstParty: apps ? apps.flatMap(app => app.origins) : PRODUCTION_ORIGINS.firstParty,
+    dashboards: (env.VITE_DEVELOPERS_URL || PRODUCTION_ORIGINS.dashboards.join(",")).split(",").map(v => v.trim()).filter(Boolean),
+  };
+  return hostingPlugin({
+    name: "maxxing-wallet-hosting",
+    headersFor: (path, enforce) => pageHeaders(pageFor(path), local, enforce ? "enforce" : undefined),
+    check() {
+      checkVercelJson();
+      const allowed = PRODUCTION_ORIGINS.firstParty;
+      if (process.env.VERCEL_ENV === "production" && apps && apps.flatMap(app => app.origins).some(origin => !allowed.includes(origin)))
+        throw new Error(`VITE_WALLET_APPS names sites vercel.json does not let embed the frame (${allowed.join(" ")}). Change BUILT_IN_APPS.production in src/first-party.ts and run hosting:sync.`);
+    },
+    files: () => ({ _headers: cloudflareFile() }),
+  }) as Plugin;
 }
 
 export default defineConfig(({ command, mode }) => {
   const env = loadEnv(mode, root, "VITE_");
   const port = Number(process.env.WALLET_FRAME_PORT || 5175);
-  // The frame reads import.meta.env.DEV, which is true only on the dev server: the same split decides http here.
-  const apps = firstPartyApps(env.VITE_WALLET_APPS, command === "serve");
+  // The frame reads import.meta.env.DEV, which is true on the dev server and in a NODE_ENV=development build (a local production-
+  // like build): the same split decides http here.
+  const apps = firstPartyApps(env.VITE_WALLET_APPS, command === "serve" || process.env.NODE_ENV === "development");
   return {
     envDir: root,
     // The cluster the wallet core's chain data follows: on "production" it switches test networks off (@maxxing/wallet-core/chains).
@@ -87,7 +115,7 @@ export default defineConfig(({ command, mode }) => {
     define: { "globalThis.__MAXXING_CLUSTER__": JSON.stringify(process.env.VITE_MAXXING_CLUSTER || env.VITE_MAXXING_CLUSTER || (process.env.VERCEL_ENV === "production" ? "production" : "development")) },
     // JSX compiles without the React plugin: its dev preamble is an inline script, which this frame never allows.
     esbuild: { jsx: "automatic" },
-    plugins: [pagePolicies(env, port, apps), publishFirstPartyApps(apps)],
+    plugins: [pagePolicies(env, port, apps), publishFirstPartyApps(apps), production(env, apps)],
     server: { port, strictPort: true },
     build: {
       target: "es2022",

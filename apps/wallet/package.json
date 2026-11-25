@@ -12,9 +12,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host localhost",
-    "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/*.test.ts"
+    "build": "tsc --noEmit && tsc -p tsconfig.hosting.json && vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.hosting.json",
+    "test": "tsx --test tests/*.test.ts",
+    "hosting:sync": "tsx hosting.ts --sync"
   },
   "dependencies": {
     "@maxxing/wallet-core": "workspace:*",
