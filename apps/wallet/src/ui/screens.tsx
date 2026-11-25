@@ -2,13 +2,72 @@ import { useEffect, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { WalletScreen, WalletScreenResult } from "../protocol";
 import * as vault from "@maxxing/wallet-core/vault";
+import { forgetWallet, oneTapEnabled, setOneTap } from "@maxxing/wallet-core/approvals";
+import type { ApprovalView } from "../consent";
 import { PinPad } from "./PinPad";
 import "./styles.css";
 
-export const SCREENS: WalletScreen[] = ["create", "unlock", "restore", "backup", "reveal", "change-pin", "remove", "passkey"];
+export const SCREENS: WalletScreen[] = ["create", "unlock", "restore", "backup", "reveal", "change-pin", "remove", "passkey", "one-tap"];
 
 let root: Root | null = null;
 let closeCurrent: ((result: WalletScreenResult) => void) | null = null;
+
+/** Closes whatever screen or approval is open, as if the user closed it. */
+export function closeScreens() { closeCurrent?.({ done: false }); }
+
+/**
+ * Shows a signing request and resolves true only when the user approves it. Requests wait their turn: one sheet at a time, in order.
+ * Another screen opening, a cancel or a sign-out closes it as declined.
+ */
+let approvalQueue: Promise<unknown> = Promise.resolve();
+export function openApproval(view: ApprovalView, setVisible: (visible: boolean) => void): Promise<boolean> {
+  const next = approvalQueue.then(() => new Promise<boolean>(resolve => {
+    const host = document.getElementById("wallet-ui") ?? document.body.appendChild(Object.assign(document.createElement("div"), { id: "wallet-ui" }));
+    root ??= createRoot(host);
+    closeCurrent?.({ done: false });
+    setVisible(true);
+    const finish = (result: WalletScreenResult) => {
+      if (closeCurrent !== finish) return;
+      closeCurrent = null;
+      root?.render(null);
+      setVisible(false);
+      resolve(result.done);
+    };
+    closeCurrent = finish;
+    root!.render(<ApprovalSheet key={Date.now()} view={view} finish={finish} />);
+  }));
+  approvalQueue = next.catch(() => false);
+  return next;
+}
+
+function ApprovalSheet({ view, finish }: { view: ApprovalView; finish: (result: WalletScreenResult) => void }) {
+  const decline = () => finish({ done: false });
+  useEffect(() => { window.focus(); }, []);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") decline(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+  return (
+    <div className="backdrop" onMouseDown={event => { if (event.target === event.currentTarget) decline(); }}>
+      <section className="sheet" role="dialog" aria-modal="true" aria-label="Approve in your MAXXING wallet">
+        <header className="sheet-head">
+          <span className="brand"><img src="/cap.webp" alt="" width="18" height="18" />MAXXING wallet</span>
+          <button type="button" className="icon" onClick={decline} aria-label="Decline">×</button>
+        </header>
+        <p className="site">{view.site} asks you to</p>
+        <h1>{view.title}</h1>
+        {view.actions.map((line, i) => <p key={i} className="action">{line}</p>)}
+        {view.warnings.map((line, i) => <p key={i} className="error" role="alert">{line}</p>)}
+        {view.rows.length > 0 && <dl className="rows">{view.rows.map(([label, value], i) => <div key={i}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
+        {view.text && <pre className={`message${view.text.raw ? " raw" : ""}`}>{view.text.text}</pre>}
+        <button type="button" className="primary" autoFocus onClick={() => finish({ done: true })}>Approve</button>
+        <button type="button" className="secondary" onClick={decline}>Decline</button>
+        <footer className="sheet-foot">Only approve what you expect. One-tap trading can skip this; it's off unless you turn it on.</footer>
+      </section>
+    </div>
+  );
+}
 
 /** Shows one wallet screen and resolves when the user finishes or closes it. One screen at a time. */
 export function openScreen(screen: WalletScreen, setVisible: (visible: boolean) => void): Promise<WalletScreenResult> {
@@ -69,6 +128,7 @@ function Sheet({ screen, finish }: { screen: WalletScreen; finish: (result: Wall
         {screen === "change-pin" && <ChangePin done={done} />}
         {screen === "remove" && <Remove done={done} close={close} />}
         {screen === "passkey" && <Passkey done={done} />}
+        {screen === "one-tap" && <OneTap done={done} />}
         <footer className="sheet-foot">Only you can open your wallet</footer>
       </section>
     </div>
@@ -235,7 +295,7 @@ function Remove({ done, close }: { done: () => void; close: () => void }) {
     <button type="button" className="danger" onClick={() => setSure(true)}>Remove</button>
     <button type="button" className="secondary" onClick={close}>Cancel</button>
   </>;
-  return <CurrentPin title="Enter your PIN" subtitle="To remove this wallet." onPin={async pin => { await vault.forgetPlatformWallet(pin); done(); }} />;
+  return <CurrentPin title="Enter your PIN" subtitle="To remove this wallet." onPin={async pin => { const id = active?.id; await vault.forgetPlatformWallet(pin); if (id) forgetWallet(id); done(); }} />;
 }
 
 function Restore({ done }: { done: () => void }) {
@@ -353,6 +413,31 @@ function Passkey({ done }: { done: () => void }) {
       catch (e) { if ((e as { code?: string })?.code === "PIN_NEEDED") setNeedsPin(true); setError(message(e)); }
       finally { setBusy(false); }
     }}>{busy ? "Waiting for your passkey…" : "Set up passkey"}</button>
+  </>;
+}
+
+/**
+ * One-tap trading on maxxing.ad, per wallet. Off by default: every signature is shown first. Turning it on takes the PIN and a clear
+ * choice; turning it off takes one tap. Only this screen, inside the wallet, can change it.
+ */
+function OneTap({ done }: { done: () => void }) {
+  const active = safeAccounts().find(a => a.id === vault.activePlatformWalletId());
+  const [on, setOn] = useState(() => oneTapEnabled(active?.id));
+  const [askPin, setAskPin] = useState(false);
+  if (!active) return <p className="error" role="alert">{friendly("NO_PLATFORM_WALLET")}</p>;
+  if (askPin) return <CurrentPin title="Enter your PIN" subtitle="To turn on one-tap trading." onPin={async pin => { await vault.checkPlatformPin(pin); setOneTap(active.id, true); setOn(true); setAskPin(false); }} />;
+  if (on) return <>
+    <h1>One-tap trading is on</h1>
+    <p>maxxing.ad can sign trades, sign-ins and other requests with this wallet without asking you each time, while the wallet is open. Partner sites always ask.</p>
+    <button type="button" className="danger" autoFocus onClick={() => { setOneTap(active.id, false); setOn(false); done(); }}>Turn off</button>
+    <button type="button" className="secondary" onClick={done}>Keep it on</button>
+  </>;
+  return <>
+    <h1>One-tap trading on maxxing.ad</h1>
+    <p>Right now your wallet shows you every request from maxxing.ad, and nothing is signed until you approve it.</p>
+    <p>With one-tap trading, maxxing.ad can sign trades, sign-ins and other requests with this wallet <b>without asking you</b>, whenever the wallet is open. Turn it on only if you trust maxxing.ad to act for you. You can turn it off here at any time.</p>
+    <button type="button" className="primary" onClick={() => setAskPin(true)}>Turn on</button>
+    <button type="button" className="secondary" autoFocus onClick={done}>Keep asking me</button>
   </>;
 }
 

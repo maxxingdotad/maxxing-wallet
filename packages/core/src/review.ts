@@ -1,6 +1,6 @@
 import { decodeFunctionData, formatUnits, hexToString, isHex, maxUint160, parseAbi, type Hex, type TransactionSerializable, type TypedDataDefinition } from "viem";
 import { getChain, KNOWN_SOLANA_MINTS, knownTokens, PERMIT2, normalizeNetworkId, wrappedNative } from "./chains";
-import { parseSolanaTransaction, type SolanaTxSummary, type TokenAction } from "./solana-tx";
+import { isSolanaTransactionMessage, parseSolanaTransaction, type SolanaTxSummary, type TokenAction } from "./solana-tx";
 
 /** Plain-language summaries of what an app asks the wallet to sign. Everything here is shown, never trusted. */
 
@@ -280,4 +280,19 @@ export function solanaSummary(bytes: unknown, signer: string): SolanaSummary {
   if (parsed.otherInstructions) rows.push(["Other actions", `${parsed.otherInstructions} · ${parsed.programs.length} program${parsed.programs.length === 1 ? "" : "s"}`]);
   rows.push(["Network fee paid by", parsed.feePayer === signer ? "You" : short(parsed.feePayer)]);
   return { ...parsed, rows, actions };
+}
+
+/**
+ * Solana bytes as the user should see them before signing: a transaction message is summarised like a transaction (signature slots
+ * are added around it, as it would be sent), anything else is shown as a message.
+ */
+export type SolanaBytesView = { kind: "transaction"; summary: SolanaSummary } | { kind: "message"; text: string; raw: boolean };
+export function solanaBytesView(bytes: unknown, signer: string): SolanaBytesView {
+  if (!(bytes instanceof Uint8Array) || bytes.length === 0) throw new Error("INVALID_SIGN_REQUEST");
+  if (!isSolanaTransactionMessage(bytes)) return { kind: "message", ...bytesForDisplay(bytes) };
+  const required = bytes[0]! & 0x80 ? bytes[1]! : bytes[0]!;
+  const tx = new Uint8Array(1 + required * 64 + bytes.length);
+  tx[0] = required;
+  tx.set(bytes, 1 + required * 64);
+  return { kind: "transaction", summary: solanaSummary(tx, signer) };
 }

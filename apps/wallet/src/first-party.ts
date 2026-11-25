@@ -5,6 +5,12 @@
  */
 export type WalletApp = { id: string; name: string; origins: string[] };
 
+/** The home site, built in. A build can replace this list with VITE_WALLET_APPS; every build publishes the list it uses (first-party-apps.json). */
+export const BUILT_IN_APPS: { production: WalletApp[]; development: WalletApp[] } = {
+  production: [{ id: "maxxing", name: "MAXXING", origins: ["https://maxxing.ad", "https://www.maxxing.ad"] }],
+  development: [{ id: "maxxing", name: "MAXXING", origins: ["http://localhost:5173", "http://127.0.0.1:5173"] }],
+};
+
 /** The apps in `raw`, or null when it is not a valid list for this kind of build. */
 export function parseFirstPartyApps(raw: string, development: boolean): WalletApp[] | null {
   const origin = development ? /^https?:\/\/[^/]+$/ : /^https:\/\/[^/]+$/;

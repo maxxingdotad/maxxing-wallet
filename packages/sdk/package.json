@@ -38,7 +38,8 @@
   "files": [
     "dist",
     "README.md",
-    "CHANGELOG.md"
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "publishConfig": {
     "main": "./dist/index.js",

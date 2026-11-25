@@ -92,4 +92,14 @@ textarea { padding: 12px; resize: none; line-height: 1.5; }
 .busy { display: flex; align-items: center; justify-content: center; gap: 10px; padding: 36px 0; color: var(--text-2); font-size: 14px; }
 .spinner { width: 18px; height: 18px; border-radius: 999px; border: 2px solid var(--line-strong); border-top-color: var(--accent); animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+/* Approving a request: who asks, what it does, the details, the message itself. */
+.site { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.action { color: var(--text); font-weight: 500; }
+.rows { margin: 0; display: flex; flex-direction: column; border-radius: var(--radius-card); background: var(--surface-2); padding: 4px 12px; }
+.rows div { display: flex; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.rows div:last-child { border-bottom: 0; }
+.rows dt { color: var(--muted); flex-shrink: 0; }
+.rows dd { margin: 0; text-align: right; overflow-wrap: anywhere; color: var(--text); }
+.message { margin: 0; max-height: 180px; overflow: auto; padding: 12px; border-radius: var(--radius-card); background: var(--surface-2); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-2); }
+.message.raw { font-size: 12px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }

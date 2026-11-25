@@ -20,13 +20,15 @@ export type WalletState = {
   published: { wallet: string | null; solana: string | null; seq: number };
   /** Grows each time the frame ends the app's signed-in session (sign-out, switch, removal). */
   sessionEpoch: number;
+  /** One-tap trading: the home site's requests are signed without a prompt. Off unless the user turned it on for this wallet. */
+  oneTap?: boolean;
 };
 
 /**
  * Wallet screens the frame shows itself. The app opens one; the PIN, the recovery phrase and backup files
  * are handled only inside the frame and never reach the app.
  */
-export type WalletScreen = "create" | "unlock" | "restore" | "backup" | "reveal" | "change-pin" | "remove" | "passkey";
+export type WalletScreen = "create" | "unlock" | "restore" | "backup" | "reveal" | "change-pin" | "remove" | "passkey" | "one-tap";
 export type WalletScreenResult = { done: boolean };
 
 export type WalletRequest = { protocol: typeof WALLET_PROTOCOL; v: number; id: string; app: string; method: string; params?: unknown };

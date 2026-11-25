@@ -1,24 +1,22 @@
 /**
  * Apps allowed to use this wallet, and the websites each may use it from.
  *
- * MAXXING is built in: it embeds this site in a hidden frame and signs without prompts. Every other app is registered by
- * its developer in the developer dashboard, reviewed by MAXXING, and read here from the API. Those apps never embed the
- * frame; they open the wallet window, where the user approves them and confirms each signature.
- * VITE_WALLET_APPS (JSON array of {id,name,origins}) replaces the built-in first-party list at build time.
+ * MAXXING is built in: it embeds this site in a hidden frame, which shows the user every signature request for approval
+ * (unless the user turned on one-tap trading for the wallet; see consent.ts). Every other app is registered by its developer
+ * in the developer dashboard, reviewed by MAXXING, and read here from the API. Those apps never embed the frame; they open
+ * the wallet window, where the user approves them and confirms each signature.
+ * VITE_WALLET_APPS (JSON array of {id,name,origins}) replaces the built-in first-party list at build time; every build
+ * publishes the list it uses at /first-party-apps.json (vite.config.ts), so a changed list can't go unseen.
  */
-import { parseFirstPartyApps, type WalletApp } from "./first-party";
+import { BUILT_IN_APPS, parseFirstPartyApps, type WalletApp } from "./first-party";
 export type { WalletApp };
 export type WalletAppStatus = "pending" | "live" | "suspended";
 export type PartnerApp = WalletApp & { status: WalletAppStatus; logoUrl: string | null; builtIn: boolean };
 
 const env = import.meta.env ?? ({} as ImportMetaEnv);
 
-const PRODUCTION: WalletApp[] = [
-  { id: "maxxing", name: "MAXXING", origins: ["https://maxxing.ad", "https://www.maxxing.ad"] },
-];
-const DEVELOPMENT: WalletApp[] = [
-  { id: "maxxing", name: "MAXXING", origins: ["http://localhost:5173", "http://127.0.0.1:5173"] },
-];
+const PRODUCTION = BUILT_IN_APPS.production;
+const DEVELOPMENT = BUILT_IN_APPS.development;
 
 function configured(): WalletApp[] {
   const raw = env.VITE_WALLET_APPS as string | undefined;
@@ -31,7 +29,7 @@ function configured(): WalletApp[] {
   return env.DEV ? DEVELOPMENT : PRODUCTION;
 }
 
-/** First-party apps: they embed the frame and sign silently. */
+/** First-party apps: they embed the frame. Their requests are shown for approval unless the user turned on one-tap trading. */
 export const WALLET_APPS = configured();
 
 export function appForOrigin(origin: string): WalletApp | null {

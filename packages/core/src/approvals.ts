@@ -73,10 +73,44 @@ export function revoke(walletId: string, appId: string): boolean {
   return true;
 }
 
-/** A removed wallet takes its connections with it. */
+/** A removed wallet takes its connections, and its one-tap choice, with it. */
 export function forgetWallet(walletId: string) {
+  setOneTap(walletId, false);
   const saved = read();
   if (!saved.wallets[walletId]) return;
   delete saved.wallets[walletId];
   write(saved);
+}
+
+// ── One-tap signing ─────────────────────────────────────────────────────────────────────────────────────────────────────
+/**
+ * By default every signature, including the home site's own, is shown to the user for approval first. One-tap signing lets the
+ * home site's requests (trades, sign-in) be signed without a prompt. It is off unless the user turns it on for a wallet, on the
+ * wallet's own screen, and can be turned off at any time. Anything that isn't exactly `{ on: true }` for the wallet counts as off.
+ */
+const ONE_TAP_KEY = "maxxing.walletOneTap.v1";
+type OneTapSaved = { version: 1; wallets: Record<string, { on: true; since: number }> };
+
+function readOneTap(): OneTapSaved {
+  try {
+    const saved = JSON.parse(store().getItem(ONE_TAP_KEY) ?? "null") as OneTapSaved | null;
+    if (saved?.version === 1 && saved.wallets && typeof saved.wallets === "object") return saved;
+  } catch { /* damaged: off */ }
+  return { version: 1, wallets: {} };
+}
+
+/** Whether one-tap signing is on for this wallet. Off by default. */
+export function oneTapEnabled(walletId: string | null | undefined): boolean {
+  if (!walletId) return false;
+  const entry = readOneTap().wallets[walletId];
+  return entry?.on === true && Number.isFinite(entry.since);
+}
+
+/** Turns one-tap signing on or off for a wallet. Only the wallet's own settings screen calls this, after the user chooses. */
+export function setOneTap(walletId: string, on: boolean, now = Date.now()) {
+  const saved = readOneTap();
+  if (on) saved.wallets[walletId] = { on: true, since: now };
+  else if (saved.wallets[walletId]) delete saved.wallets[walletId];
+  else return;
+  store().setItem(ONE_TAP_KEY, JSON.stringify(saved));
 }

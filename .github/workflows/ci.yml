@@ -8,13 +8,14 @@ on:
 permissions:
   contents: read
 
+# Actions are pinned to the exact commits of their tags, so a moved tag can't change what runs here.
 jobs:
   sdk:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -22,13 +23,16 @@ jobs:
       - run: pnpm --filter @maxxing/wallet-sdk typecheck
       - run: pnpm --filter @maxxing/wallet-sdk test
       - run: pnpm --filter @maxxing/wallet-sdk build
+      # The MIT package must contain none of the source-available wallet code.
+      - name: SDK bundle has no wallet code
+        run: "! grep -rlE 'wallet-core|wallet-frame|maxxing.walletOneTap|maxxing.wallet.v3' packages/sdk/dist"
 
   core:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
@@ -39,16 +43,23 @@ jobs:
   wallet:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @maxxing/wallet-frame test
-      # The same build Vercel deploys to wallet.maxxing.ad; the file hashes are printed so a deployment can be compared.
-      - run: pnpm --filter @maxxing/wallet-frame build
+      # The same build wallet.maxxing.ad deploys: production cluster, no VITE_* settings. The file hashes are printed so a
+      # deployment can be compared with them (docs/SELF-CUSTODY.md, "Rebuild and compare").
+      - name: Build as deployed
+        run: |
+          if env | grep -q '^VITE_'; then echo "VITE_* settings must not be set for this build"; exit 1; fi
+          pnpm --filter @maxxing/wallet-frame build
         env:
           VERCEL_ENV: production
-      - run: cd apps/wallet/dist && find . -type f | sort | xargs sha256sum
+      - name: Home site is the built-in list
+        run: node -e "const f=require('./apps/wallet/dist/first-party-apps.json'); if (f.source !== 'built-in') { console.error(f); process.exit(1); } console.log(JSON.stringify(f.apps))"
+      - name: File hashes
+        run: cd apps/wallet/dist && find . -type f | sort | xargs sha256sum

@@ -1,6 +1,6 @@
 /**
- * The wallet's message format, shared with the wallet window (apps/wallet-frame/src/protocol.ts, `maxxing-wallet` v1).
- * Copied rather than imported so this package stands alone when published.
+ * The wallet's message format, shared with the wallet window at wallet.maxxing.ad (`maxxing-wallet` v1).
+ * Written out here rather than imported, so this MIT package stands alone when published and never includes the wallet's own code.
  */
 export const WALLET_PROTOCOL = "maxxing-wallet";
 export const WALLET_PROTOCOL_VERSION = 1;

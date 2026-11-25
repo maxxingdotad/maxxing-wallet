@@ -5,7 +5,7 @@ import bs58 from "bs58";
 import { encodeFunctionData, maxUint160, maxUint256, parseAbi } from "viem";
 import { approve, approvalFor, forgetWallet, listApprovals, revoke, touch } from "../src/approvals";
 import { isSolanaTransactionMessage, parseSolanaTransaction, signSolanaTransaction } from "../src/solana-tx";
-import { bytesForDisplay, messageForDisplay, networkKnown, solanaSummary, transactionSummary, typedDataSummary, checkedTransaction } from "../src/review";
+import { bytesForDisplay, messageForDisplay, networkKnown, solanaBytesView, solanaSummary, transactionSummary, typedDataSummary, checkedTransaction } from "../src/review";
 
 // Disposable in-memory storage only.
 const data = new Map<string, string>();
@@ -288,4 +288,15 @@ test("typed data: unsigned keys never push the signed fields off the screen, and
   assert.equal(summary.spending, true, "a field that names a taker warns");
   const many = Array.from({ length: 70 }, (_, i) => ({ name: `f${i}`, type: "uint256" }));
   assert.throws(() => typedDataSummary({ types: { Big: many }, primaryType: "Big", message: Object.fromEntries(many.map(f => [f.name, "1"])) }), /EIP712_TOO_LARGE/);
+});
+
+test("Solana bytes to sign are shown as the transaction they are, or as a message", () => {
+  const pair = nacl.sign.keyPair(), other = nacl.sign.keyPair(), me = bs58.encode(pair.publicKey);
+  const { message } = solTransfer(pair.publicKey, other.publicKey, 2_000_000_000n);
+  const asTransaction = solanaBytesView(message, me);
+  assert.equal(asTransaction.kind, "transaction");
+  assert.equal(asTransaction.kind === "transaction" && asTransaction.summary.rows[0]![1], "2 SOL", "a transaction message can't pass as a message");
+  assert.deepEqual(solanaBytesView(new TextEncoder().encode("Sign in to Acme"), me), { kind: "message", text: "Sign in to Acme", raw: false });
+  assert.throws(() => solanaBytesView(message, bs58.encode(other.publicKey)), /SIGNER_NOT_IN_TRANSACTION/);
+  assert.throws(() => solanaBytesView(new Uint8Array(), me), /INVALID_SIGN_REQUEST/);
 });

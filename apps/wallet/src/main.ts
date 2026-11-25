@@ -1,16 +1,21 @@
-import { WALLET_PROTOCOL, WALLET_PROTOCOL_VERSION, type WalletEvent, type WalletRequest, type WalletResponse, type WalletScreen } from "./protocol";
-import { appForOrigin } from "./registry";
+import { WALLET_PROTOCOL, WALLET_PROTOCOL_VERSION, type WalletEvent, type WalletRequest, type WalletResponse, type WalletScreen } from "./protocol";import { appForOrigin } from "./registry";
 import * as vault from "@maxxing/wallet-core/vault";
 import * as signing from "@maxxing/wallet-core/signing";
 import { walletState } from "./state";
-import { openScreen, SCREENS } from "./ui/screens";
+import { closeScreens, openApproval, openScreen, SCREENS } from "./ui/screens";
 import * as approvals from "@maxxing/wallet-core/approvals";
+import { isSigningMethod, signWithConsent, type SigningMethod } from "./consent";
 
 type Handler = (params: any) => unknown;
+const setVisible = (visible: boolean) => announce({ protocol: WALLET_PROTOCOL, v: WALLET_PROTOCOL_VERSION, event: "visible", visible });
+
+const withConsent = (method: SigningMethod, params: unknown, origin: string) =>
+  signWithConsent(method, params, origin, view => openApproval(view, setVisible), shown => handlers[method]!(shown));
 
 /**
  * Every call an app may make. Anything not listed is refused. Creating, unlocking, backing up and restoring
  * happen only on the frame's own screens ("ui.open"), so a PIN or recovery phrase never passes through the app.
+ * The signing methods below run only through withConsent.
  */
 const handlers: Record<string, Handler> = {
   "state": () => walletState(),
@@ -18,12 +23,12 @@ const handlers: Record<string, Handler> = {
   "ui.open": p => {
     const screen = String(p?.screen ?? "") as WalletScreen;
     if (!SCREENS.includes(screen)) throw new Error("WALLET_SCREEN_UNKNOWN");
-    return openScreen(screen, visible => announce({ protocol: WALLET_PROTOCOL, v: WALLET_PROTOCOL_VERSION, event: "visible", visible }));
+    return openScreen(screen, setVisible);
   },
-  "accounts.select": p => vault.selectPlatformWallet(String(p?.id ?? "")),
+  "accounts.select": p => { closeScreens(); return vault.selectPlatformWallet(String(p?.id ?? "")); },
   "accounts.rename": p => vault.renamePlatformWallet(String(p?.id ?? ""), String(p?.label ?? "")),
-  "wallet.signOut": () => vault.signOutPlatformWallet(),
-  "wallet.cancel": () => vault.cancelPlatformWalletOperation(),
+  "wallet.signOut": () => { closeScreens(); return vault.signOutPlatformWallet(); },
+  "wallet.cancel": () => { closeScreens(); return vault.cancelPlatformWalletOperation(); },
   // Partner apps the active wallet is connected to (through the wallet window), for MAXXING's settings.
   "apps.list": () => { const id = vault.activePlatformWalletId(); return id ? approvals.listApprovals(id) : []; },
   "apps.revoke": p => { const id = vault.activePlatformWalletId(); return id ? approvals.revoke(id, String(p?.appId ?? "")) : false; },
@@ -66,7 +71,7 @@ window.addEventListener("message", async event => {
   if (!app) return;
   const request = event.data as WalletRequest;
   if (!request || request.protocol !== WALLET_PROTOCOL || typeof request.id !== "string" || typeof request.method !== "string") return;
-  const reply = (body: { ok: true; result: unknown } | { ok: false; error: { message: string } }) =>
+  const reply = (body: { ok: true; result: unknown } | { ok: false; error: { message: string; code?: number } }) =>
     post({ protocol: WALLET_PROTOCOL, v: WALLET_PROTOCOL_VERSION, id: request.id, ...body } as WalletResponse, event.origin);
   if (request.v !== WALLET_PROTOCOL_VERSION) return reply({ ok: false, error: { message: "WALLET_PROTOCOL_UNSUPPORTED" } });
   if (request.app !== app.id) return reply({ ok: false, error: { message: "WALLET_APP_MISMATCH" } });
@@ -74,10 +79,11 @@ window.addEventListener("message", async event => {
   if (!handler) return reply({ ok: false, error: { message: "WALLET_METHOD_UNSUPPORTED" } });
   parentOrigin = event.origin;
   try {
-    const result = await handler(request.params);
+    const result = await (isSigningMethod(request.method) ? withConsent(request.method, request.params, event.origin) : handler(request.params));
     reply({ ok: true, result });
   } catch (error) {
-    reply({ ok: false, error: { message: error instanceof Error ? error.message : String(error) } });
+    const code = (error as { code?: unknown })?.code;
+    reply({ ok: false, error: { message: error instanceof Error ? error.message : String(error), ...(typeof code === "number" ? { code } : {}) } });
   } finally {
     publishState();
   }

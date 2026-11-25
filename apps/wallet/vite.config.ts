@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type Plugin } from "vite";
-import { parseFirstPartyApps, type WalletApp } from "./src/first-party";
+import { BUILT_IN_APPS, parseFirstPartyApps, type WalletApp } from "./src/first-party";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -18,6 +18,20 @@ function firstPartyApps(raw: string | undefined, development: boolean) {
   if (!development) throw new Error(problem);
   console.error(problem);
   return null;
+}
+
+/**
+ * Publishes the first-party list this build uses at /first-party-apps.json: the built-in list, or the one VITE_WALLET_APPS put in
+ * its place. Anyone can read what the deployed wallet treats as the home site, and a build with a different list has different files.
+ */
+function publishFirstPartyApps(apps: WalletApp[] | null): Plugin {
+  return {
+    name: "maxxing-wallet-first-party-apps",
+    generateBundle() {
+      const list = apps ?? BUILT_IN_APPS.production;
+      this.emitFile({ type: "asset", fileName: "first-party-apps.json", source: JSON.stringify({ source: apps ? "VITE_WALLET_APPS" : "built-in", apps: list }, null, 2) + "\n" });
+    },
+  };
 }
 
 /** Who may embed the frame. Production adds these headers in its host config (vercel.json); this covers local development. */
@@ -68,12 +82,12 @@ export default defineConfig(({ command, mode }) => {
   const apps = firstPartyApps(env.VITE_WALLET_APPS, command === "serve");
   return {
     envDir: root,
-    // The chain registry's cluster in the browser: on "production" it switches test networks off (packages/chain-registry).
+    // The cluster the wallet core's chain data follows: on "production" it switches test networks off (@maxxing/wallet-core/chains).
     // VITE_MAXXING_CLUSTER when set, else production for a Vercel production build (VERCEL_ENV), else development.
     define: { "globalThis.__MAXXING_CLUSTER__": JSON.stringify(process.env.VITE_MAXXING_CLUSTER || env.VITE_MAXXING_CLUSTER || (process.env.VERCEL_ENV === "production" ? "production" : "development")) },
     // JSX compiles without the React plugin: its dev preamble is an inline script, which this frame never allows.
     esbuild: { jsx: "automatic" },
-    plugins: [pagePolicies(env, port, apps)],
+    plugins: [pagePolicies(env, port, apps), publishFirstPartyApps(apps)],
     server: { port, strictPort: true },
     build: {
       target: "es2022",
