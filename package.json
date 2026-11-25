@@ -1,0 +1,9 @@
+{
+  "name": "maxxing-wallet",
+  "private": true,
+  "packageManager": "pnpm@10.17.1",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": "10.x"
+  }
+}

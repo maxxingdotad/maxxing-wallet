@@ -1,0 +1,37 @@
+# Publishes @maxxing/wallet-sdk to npm from this repository, with provenance: the npm page links the commit and the run that
+# built it. Start a release by pushing a tag named after the version, e.g. `git tag sdk-v0.2.2 && git push origin sdk-v0.2.2`.
+# npm trusts this workflow through Trusted Publishing (OpenID Connect), so no npm token is stored anywhere.
+name: Release SDK
+
+on:
+  push:
+    tags: ["sdk-v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - run: npm install -g npm@11
+      - run: pnpm install --frozen-lockfile
+      - name: Tag matches the package version
+        run: |
+          version=$(node -p "require('./packages/sdk/package.json').version")
+          test "sdk-v$version" = "$GITHUB_REF_NAME" || { echo "Tag $GITHUB_REF_NAME doesn't match version $version"; exit 1; }
+      - run: pnpm --filter @maxxing/wallet-sdk typecheck
+      - run: pnpm --filter @maxxing/wallet-sdk test
+      - run: pnpm --filter @maxxing/wallet-sdk build
+      # pnpm pack applies publishConfig (the dist entry points); npm publishes the packed file with provenance.
+      - run: pnpm pack --pack-destination ../..
+        working-directory: packages/sdk
+      - run: npm publish ./maxxing-wallet-sdk-*.tgz --provenance --access public

@@ -1,0 +1,112 @@
+{
+  "name": "@maxxing/wallet-sdk",
+  "version": "0.2.1",
+  "description": "Let your users connect their MAXXING wallet: an EIP-1193 provider (EIP-6963) and a Solana Wallet Standard wallet.",
+  "license": "MIT",
+  "homepage": "https://developers.maxxing.ad/docs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxxingdotad/maxxing-wallet.git",
+    "directory": "packages/sdk"
+  },
+  "bugs": {
+    "email": "support@maxxing.ad"
+  },
+  "keywords": [
+    "maxxing",
+    "wallet",
+    "eip-1193",
+    "eip-6963",
+    "solana",
+    "wallet-standard",
+    "siwe",
+    "web3"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./server": "./src/server.ts",
+    "./siwe": "./src/siwe.ts",
+    "./appearance": "./src/appearance.ts",
+    "./data": "./src/data.ts",
+    "./react": "./src/react.ts"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "main": "./dist/index.js",
+    "types": "./dist/index.d.ts",
+    "exports": {
+      ".": {
+        "types": "./dist/index.d.ts",
+        "import": "./dist/index.js"
+      },
+      "./server": {
+        "types": "./dist/server.d.ts",
+        "import": "./dist/server.js"
+      },
+      "./siwe": {
+        "types": "./dist/siwe.d.ts",
+        "import": "./dist/siwe.js"
+      },
+      "./appearance": {
+        "types": "./dist/appearance.d.ts",
+        "import": "./dist/appearance.js"
+      },
+      "./data": {
+        "types": "./dist/data.d.ts",
+        "import": "./dist/data.js"
+      },
+      "./react": {
+        "types": "./dist/react.d.ts",
+        "import": "./dist/react.js"
+      },
+      "./browser": {
+        "types": "./dist/browser.d.ts",
+        "import": "./dist/maxxing-wallet.mjs"
+      },
+      "./package.json": "./package.json"
+    }
+  },
+  "sideEffects": false,
+  "scripts": {
+    "build": "vite build && vite build --config vite.browser.config.ts && tsc -p tsconfig.build.json && node scripts/dts-extensions.mjs",
+    "prepublishOnly": "pnpm build && pnpm test",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@solana/wallet-standard-features": "1.5.0",
+    "@wallet-standard/base": "1.1.1",
+    "@wallet-standard/features": "1.1.1",
+    "bs58": "6.0.0"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/react": "19.1.13",
+    "react": "19.1.1",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2",
+    "viem": "2.37.3",
+    "vite": "7.1.5",
+    "@types/node": "22.15.0"
+  },
+  "unpkg": "./dist/maxxing-wallet.js",
+  "jsdelivr": "./dist/maxxing-wallet.js"
+}
