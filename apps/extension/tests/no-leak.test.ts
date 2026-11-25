@@ -157,8 +157,9 @@ function inpageSdkFiles(): string[] {
 
 test("the SDK code bundled into websites' pages has only reviewed ways out", () => {
   const found: Record<string, string[]> = {};
-  const sdkRoot = decodeURIComponent(new URL("../", import.meta.resolve("@maxxing/wallet-sdk")).pathname).replace(/^\/([A-Za-z]:)/, "$1").replace(/\\/g, "/");
-  for (const file of inpageSdkFiles()) { const ways = waysOut(file); if (ways.length) found[file.replace(/\\/g, "/").replace(sdkRoot, "")] = ways; }
+  // Named from the SDK's own src/ folder, so the key is the same however the package path resolves (Windows, Linux, symlinks).
+  const inSdk = (file: string) => /(?:wallet-sdk|packages\/sdk)\/(src\/.+)$/.exec(file.replace(/\\/g, "/"))?.[1] ?? file;
+  for (const file of inpageSdkFiles()) { const ways = waysOut(file); if (ways.length) found[inSdk(file)] = ways; }
   assert.deepEqual(found, SDK_REVIEWED);
 });
 const SDK_REVIEWED: Record<string, string[]> = {
