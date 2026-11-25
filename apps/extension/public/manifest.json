@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "MAXXING Wallet",
+  "short_name": "MAXXING",
+  "version": "0.1.0",
+  "description": "Your keys on your device, every chain in one balance, and every request shown before you sign.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "MAXXING Wallet",
+    "default_icon": { "16": "brand/icon-16.png", "32": "brand/icon-32.png", "48": "brand/icon-48.png", "128": "brand/icon-128.png" }
+  },
+  "icons": { "16": "brand/icon-16.png", "32": "brand/icon-32.png", "48": "brand/icon-48.png", "128": "brand/icon-128.png" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "background": { "service_worker": "background.js", "type": "module" },
+  "content_scripts": [
+    { "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"], "js": ["inpage.js"], "run_at": "document_start", "world": "MAIN", "all_frames": false },
+    { "matches": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"], "js": ["content.js"], "run_at": "document_start", "all_frames": false }
+  ],
+  "permissions": ["storage", "alarms", "sidePanel", "clipboardWrite", "offscreen"],
+  "host_permissions": ["https://api.maxxing.ad/*", "https://api.relay.link/*"],
+  "content_security_policy": {
+    "extension_pages": "set by scripts/build.mjs: connect-src lists the chain registry's public RPC origins, the MAXXING API, Relay and the blocklist"
+  },
+  "minimum_chrome_version": "116"
+}

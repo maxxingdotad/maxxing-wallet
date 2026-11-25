@@ -81,7 +81,11 @@ export type MaxxingWallet = {
   destroy(): void;
 };
 
-export { networksFor, browserRpcOrigins } from "./networks";
+export { networksFor, browserRpcOrigins, browserRpcUrls, mainnetSolanaChains } from "./networks";
+/** The networks the SDK knows, with their public RPC endpoints (generated from the MAXXING chain registry). */
+export { SDK_CHAINS, type SdkChain } from "./chains.generated";
+/** Where a site remembers the connected wallet's public addresses; wallets built on these providers can supply their own. */
+export { ConnectionStore } from "./connection";
 
 /** Sets up the MAXXING wallet for your site. Call once, early (before your wallet library looks for wallets). */
 export function createMaxxingWallet(options: MaxxingWalletOptions): MaxxingWallet {

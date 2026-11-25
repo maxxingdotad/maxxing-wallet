@@ -18,6 +18,7 @@
     "./solana-tx": "./src/solana-tx.ts",
     "./approvals": "./src/approvals.ts",
     "./review": "./src/review.ts",
+    "./request-view": "./src/request-view.ts",
     "./sign-in": "./src/sign-in.ts",
     "./simulation": "./src/simulation.ts",
     "./chains": "./src/chains.ts",

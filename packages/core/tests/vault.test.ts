@@ -64,6 +64,30 @@ test("MAXXING wallet with a PIN", async t => {
     assert.equal(await vault.restoreDeviceSession(), false, "sign-out removes the device session");
   });
 
+  await t.test("an app can keep open sessions in its own store; forgetting them there locks the wallet", async () => {
+    const sessions = await import("../src/device-session");
+    const kept = new Map<string, Uint8Array>();
+    sessions.setDeviceSessionStore({
+      remember: async (id, key) => void kept.set(id, new Uint8Array(key)), read: async id => kept.has(id) ? new Uint8Array(kept.get(id)!) : null,
+      forget: async id => void kept.delete(id), forgetAll: async () => kept.clear(),
+    });
+    try {
+      await vault.unlockPlatformWallet(PIN);
+      assert.equal(kept.size, 1, "the session went to the app's store");
+      window.dispatchEvent(new Event("pagehide"));
+      assert.equal(await vault.restoreDeviceSession(), true);
+      window.dispatchEvent(new Event("pagehide"));
+      kept.clear(); // what a browser restart or an auto-lock does to a memory-only store
+      assert.equal(await vault.restoreDeviceSession(), false);
+      assert.equal(vault.platformWalletUnlocked(), false);
+    } finally { sessions.setDeviceSessionStore(null); }
+    // The default store is back: the web wallet stays open until sign-out, as before.
+    await vault.unlockPlatformWallet(PIN);
+    window.dispatchEvent(new Event("pagehide"));
+    assert.equal(await vault.restoreDeviceSession(), true);
+    await vault.signOutPlatformWallet();
+  });
+
   await t.test("wrong PINs make the user wait longer each time, never locking them out", async () => {
     assert.deepEqual([1, 4, 5, 6, 7, 12, 20].map(vault.waitAfter), [0, 0, 30_000, 60_000, 120_000, 3_600_000, 3_600_000]);
     for (let i = 0; i < 4; i++) await rejects(vault.unlockPlatformWallet(OTHER), /^Error: Wrong PIN\.$/);
@@ -178,4 +202,69 @@ test("the wallet window opens the wallet without signing MAXXING in or out", asy
     await vault.unlockPlatformWallet(PIN);
     assert.equal(localStorage.getItem("maxxing.wallet"), null);
   } finally { vault.setWalletPublishing(true); }
+});
+
+test("one recovery phrase opens many accounts; account 0 is the wallet as it always was", async () => {
+  const { derivePlatformAccount } = await import("../src/derive");
+  const { privateKeyToAccount } = await import("viem/accounts");
+  const { default: nacl } = await import("tweetnacl");
+  const { default: bs58 } = await import("bs58");
+  data.clear();
+  const wallet = await vault.createPlatformWallet(PIN, "Many");
+  const phrase = await vault.revealPlatformMnemonic(PIN);
+  // Account 0 is the same derivation as before accounts existed, and account n uses the standard n-th paths.
+  assert.equal(derivePlatformAccount(phrase, 0).evm.address, derivePlatformAccount(phrase).evm.address);
+  assert.equal(derivePlatformAccount(phrase, 1).evm.path, "m/44'/60'/0'/0/1");
+  assert.equal(derivePlatformAccount(phrase, 1).solana.path, "m/44'/501'/1'/0'");
+  assert.throws(() => derivePlatformAccount(phrase, -1), /ACCOUNT_INDEX_INVALID/);
+  assert.equal(vault.savedPlatformWallets()[0]!.accounts.length, 1);
+
+  const second = await vault.addPlatformAccount("Trading");
+  const expected = derivePlatformAccount(phrase, 1);
+  assert.equal(second.index, 1);
+  assert.equal(second.evm, expected.evm.address);
+  assert.equal(second.solana, expected.solana.address);
+  assert.deepEqual(vault.platformWalletPublic(), { evm: second.evm, solana: second.solana }, "the new account is open");
+  // Signatures come from the open account's keys.
+  const signer = vault.platformEvmAccount()!;
+  assert.equal(signer.address, second.evm);
+  const sig = vault.platformSolanaSign(new TextEncoder().encode("hi"));
+  assert.ok(nacl.sign.detached.verify(new TextEncoder().encode("hi"), sig, bs58.decode(second.solana)));
+  assert.equal((await vault.revealPlatformPrivateKeys(PIN)).evm.toLowerCase(), `0x${[...expected.evm.privateKeyBytes].map(b => b.toString(16).padStart(2, "0")).join("")}`);
+  assert.equal(privateKeyToAccount((await vault.revealPlatformPrivateKeys(PIN)).evm).address, second.evm);
+
+  // Locked and reopened, the selected account comes back, checked against its saved addresses.
+  await vault.signOutPlatformWallet();
+  await vault.unlockPlatformWallet(PIN);
+  assert.equal(vault.platformWalletPublic()!.evm, second.evm);
+  await vault.selectPlatformAccount(0);
+  assert.equal(vault.platformWalletPublic()!.evm, wallet.evm);
+  assert.equal(vault.savedPlatformWallets()[0]!.selected, 0);
+
+  await vault.renamePlatformAccount(1, "  Savings  ");
+  await vault.setPlatformAccountHidden(1, true);
+  assert.deepEqual(vault.savedPlatformWallets()[0]!.accounts.map(a => [a.index, a.label, a.hidden]), [[0, "Many", false], [1, "Savings", true]]);
+  await assert.rejects(vault.setPlatformAccountHidden(0, true), /another account/);
+  await vault.setPlatformAccountHidden(1, false);
+
+  // A record whose saved addresses don't match the phrase's keys is refused, never opened.
+  const saved = JSON.parse(localStorage.getItem("maxxing.wallet.v3")!);
+  saved.accounts[0].extra[0].evm = "0x1111111111111111111111111111111111111111";
+  saved.accounts[0].selected = 1;
+  localStorage.setItem("maxxing.wallet.v3", JSON.stringify(saved));
+  await vault.signOutPlatformWallet();
+  await rejects(vault.unlockPlatformWallet(PIN), /DAMAGED/);
+});
+
+test("private keys are exported only with the right PIN, and are the keys of the recovery phrase", async () => {
+  data.clear();
+  await vault.createPlatformWallet(PIN, "Keys");
+  const { derivePlatformAccount, bytesToHex } = await import("../src/derive");
+  const { default: bs58 } = await import("bs58");
+  await rejects(vault.revealPlatformPrivateKeys("000000"), /Wrong PIN/);
+  const keys = await vault.revealPlatformPrivateKeys(PIN);
+  const account = derivePlatformAccount(await vault.revealPlatformMnemonic(PIN));
+  assert.equal(keys.evm, `0x${bytesToHex(account.evm.privateKeyBytes)}`);
+  assert.equal(keys.solana, bs58.encode(account.solana.secretKey));
+  assert.equal(bs58.decode(keys.solana).length, 64);
 });

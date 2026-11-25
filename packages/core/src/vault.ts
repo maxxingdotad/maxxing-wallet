@@ -1,6 +1,7 @@
+import bs58 from "bs58";
 import nacl from "tweetnacl";
 import { privateKeyToAccount, type PrivateKeyAccount } from "viem/accounts";
-import { bytesToHex, createMnemonic, derivePlatformAccount, mnemonicIsValid, normalizeMnemonic, type PlatformAccount } from "./derive";
+import { bytesToHex, createMnemonic, derivePlatformAccount, MAX_ACCOUNT_INDEX, mnemonicIsValid, normalizeMnemonic, type PlatformAccount } from "./derive";
 import { forgetAllDeviceSessions, forgetDeviceSession, readDeviceSession, rememberDeviceSession } from "./device-session";
 
 /**
@@ -28,10 +29,18 @@ type Sealed = { iv: string; cipher: string };
 type PinWrap = { salt: string; iv: string; cipher: string; iterations: number };
 /** The data key wrapped by a passkey: its credential id, the PRF input, and the wrapped key. */
 type PasskeyWrap = Sealed & { credential: string; salt: string };
-type SavedAccount = PublicRecord & { id: string; label: string; backedUp: boolean; seal: Sealed; pin: PinWrap; passkey?: PasskeyWrap };
+/**
+ * More accounts from the same recovery phrase (index 1 and up; index 0 is the wallet's own addresses above). Optional, so a wallet
+ * record written before accounts existed, and the wallet window, which never adds any, are unchanged.
+ */
+type ExtraAccount = PublicRecord & { index: number; label: string; hidden?: boolean };
+type SavedAccount = PublicRecord & { id: string; label: string; backedUp: boolean; seal: Sealed; pin: PinWrap; passkey?: PasskeyWrap; extra?: ExtraAccount[]; selected?: number };
 type Collection = { version: 3; activeId: string | null; accounts: SavedAccount[] };
 type Attempts = { failures: number; waitUntil: number };
-export type WalletSummary = PublicRecord & { id: string; label: string; backedUp: boolean; legacy: false; passkey: boolean };
+/** One account of a wallet: index 0 is the wallet's own. */
+export type AccountSummary = PublicRecord & { index: number; label: string; hidden: boolean };
+/** `evm`/`solana`: the selected account's addresses. `accounts`: every account of this recovery phrase on this device. */
+export type WalletSummary = PublicRecord & { id: string; label: string; backedUp: boolean; legacy: false; passkey: boolean; selected: number; accounts: AccountSummary[] };
 
 let unlocked: PlatformAccount | null = null;
 let epoch = 0;
@@ -55,6 +64,16 @@ const sealValid = (s: Sealed) => !!s && typeof s.iv === "string" && typeof s.cip
 const pinValid = (p: PinWrap) => !!p && sealValid(p) && typeof p.salt === "string" && p.salt.length === 24 && p.iterations === PIN_ITERATIONS;
 const passkeyValid = (p: PasskeyWrap | undefined) => p === undefined || (!!p && sealValid(p) && typeof p.salt === "string" && p.salt.length === 44
   && typeof p.credential === "string" && /^[A-Za-z0-9_-]{16,1400}$/.test(p.credential));
+const extraValid = (a: SavedAccount) => {
+  if (a.extra === undefined) return a.selected === undefined || a.selected === 0;
+  if (!Array.isArray(a.extra) || a.extra.length > MAX_ACCOUNT_INDEX) return false;
+  const ok = a.extra.every(x => publicValid(x) && Number.isSafeInteger(x.index) && x.index >= 1 && x.index <= MAX_ACCOUNT_INDEX && typeof x.label === "string" && (x.hidden === undefined || typeof x.hidden === "boolean"));
+  return ok && new Set(a.extra.map(x => x.index)).size === a.extra.length && (a.selected === undefined || a.selected === 0 || a.extra.some(x => x.index === a.selected));
+};
+/** The wallet's accounts in index order, index 0 first. */
+const accountsOf = (a: SavedAccount): AccountSummary[] => [{ index: 0, label: a.label, evm: a.evm, solana: a.solana, hidden: false }, ...(a.extra ?? []).map(x => ({ index: x.index, label: x.label, evm: x.evm, solana: x.solana, hidden: !!x.hidden })).sort((x, y) => x.index - y.index)];
+/** The selected account's record: its index and public addresses. */
+const selectedOf = (a: SavedAccount): AccountSummary => accountsOf(a).find(x => x.index === (a.selected ?? 0)) ?? accountsOf(a)[0]!;
 
 function read(): Collection {
   const raw = store().getItem(COLLECTION_KEY);
@@ -62,7 +81,7 @@ function read(): Collection {
   try {
     const c = JSON.parse(raw) as Collection;
     const ok = c.version === 3 && Array.isArray(c.accounts) && c.accounts.length <= MAX_WALLETS
-      && c.accounts.every(a => publicValid(a) && typeof a.id === "string" && typeof a.label === "string" && typeof a.backedUp === "boolean" && sealValid(a.seal) && pinValid(a.pin) && passkeyValid(a.passkey))
+      && c.accounts.every(a => publicValid(a) && typeof a.id === "string" && typeof a.label === "string" && typeof a.backedUp === "boolean" && sealValid(a.seal) && pinValid(a.pin) && passkeyValid(a.passkey) && extraValid(a))
       && new Set(c.accounts.map(a => a.id)).size === c.accounts.length
       && (c.activeId === null || c.accounts.some(a => a.id === c.activeId));
     if (!ok) throw new Error();
@@ -157,9 +176,12 @@ async function dataKeyFromPin(a: SavedAccount, pin: string) {
 function dispose(a: PlatformAccount | null) { if (!a) return; a.evm.privateKeyBytes.fill(0); a.solana.secretKey.fill(0); a.mnemonic = ""; }
 function keysOnly(a: PlatformAccount) { a.mnemonic = ""; return a; }
 function matches(account: PlatformAccount, a: PublicRecord) { return account.evm.address.toLowerCase() === a.evm.toLowerCase() && account.solana.address === a.solana; }
-async function accountFor(a: SavedAccount, dataKey: Uint8Array) {
-  const account = derivePlatformAccount(await openPhrase(a, dataKey));
-  if (!matches(account, a)) { dispose(account); throw new Error("WALLET_STORAGE_DAMAGED_RESTORE_BACKUP"); }
+/** The keys of the wallet's selected account (or `index`), checked against the addresses saved for it. */
+async function accountFor(a: SavedAccount, dataKey: Uint8Array, index = a.selected ?? 0) {
+  const expected = accountsOf(a).find(x => x.index === index);
+  if (!expected) throw new Error("ACCOUNT_NOT_FOUND");
+  const account = derivePlatformAccount(await openPhrase(a, dataKey), index);
+  if (!matches(account, expected)) { dispose(account); throw new Error("WALLET_STORAGE_DAMAGED_RESTORE_BACKUP"); }
   return account;
 }
 function assertCurrent(start: number, id: string) { if (epoch !== start || read().activeId !== id) throw new Error("WALLET_OPERATION_CANCELLED"); }
@@ -190,14 +212,17 @@ async function open(a: SavedAccount, account: PlatformAccount, dataKey: Uint8Arr
     assertCurrent(start, a.id);
     dispose(unlocked); unlocked = keysOnly(account);
     store().setItem(SIGNED_IN_KEY, `${a.id}:${Date.now()}`);
-    publish(a);
+    publish(selectedOf(a));
   } catch (error) { if (unlocked !== account) dispose(account); throw error; }
 }
 
 // ---- public reads ----------------------------------------------------------------------------------------------
 
-export function platformWalletPublic(): PublicRecord | null { try { const a = current(); return { evm: a.evm, solana: a.solana }; } catch { return null; } }
-export function savedPlatformWallets(): WalletSummary[] { return read().accounts.map(a => ({ id: a.id, label: a.label, evm: a.evm, solana: a.solana, backedUp: a.backedUp, legacy: false, passkey: !!a.passkey })); }
+/** The selected account's public addresses. */
+export function platformWalletPublic(): PublicRecord | null { try { const s = selectedOf(current()); return { evm: s.evm, solana: s.solana }; } catch { return null; } }
+export function savedPlatformWallets(): WalletSummary[] {
+  return read().accounts.map(a => { const s = selectedOf(a); return { id: a.id, label: a.label, evm: s.evm, solana: s.solana, backedUp: a.backedUp, legacy: false, passkey: !!a.passkey, selected: s.index, accounts: accountsOf(a) }; });
+}
 export function activePlatformWalletId() { return read().activeId; }
 export function platformWalletUnlocked() { return unlocked != null; }
 export function platformSolanaAddress() { return platformWalletPublic()?.solana ?? null; }
@@ -233,7 +258,7 @@ export async function restoreDeviceSession() {
   try {
     const account = await accountFor(a, dataKey);
     if (epoch !== start || read().activeId !== a.id) { dispose(account); return false; }
-    dispose(unlocked); unlocked = keysOnly(account); publish(a);
+    dispose(unlocked); unlocked = keysOnly(account); publish(selectedOf(a));
     return true;
   } catch { await forgetDeviceSession(a.id); return false; }
   finally { dataKey.fill(0); }
@@ -315,6 +340,19 @@ export async function revealPlatformMnemonic(pin: string) {
   const dataKey = await dataKeyFromPin(a, pin);
   try { const account = await accountFor(a, dataKey); try { return account.mnemonic; } finally { dispose(account); } }
   finally { dataKey.fill(0); }
+}
+/**
+ * The active wallet's private keys, after the PIN: EVM as 0x hex, Solana as the base58 64-byte secret key other Solana wallets
+ * import. Only the wallet's own export screens call this, behind their warnings; the key copies here are wiped once encoded.
+ */
+export async function revealPlatformPrivateKeys(pin: string): Promise<{ evm: `0x${string}`; solana: string }> {
+  const a = current();
+  const dataKey = await dataKeyFromPin(a, pin);
+  try {
+    const account = await accountFor(a, dataKey);
+    try { return { evm: `0x${bytesToHex(account.evm.privateKeyBytes)}`, solana: bs58.encode(account.solana.secretKey) }; }
+    finally { dispose(account); }
+  } finally { dataKey.fill(0); }
 }
 export async function confirmPlatformBackup(pin: string, checks: { index: number; word: string }[]) {
   const words = (await revealPlatformMnemonic(pin)).split(" ");
@@ -489,9 +527,77 @@ function forgetPasskeyCredential(credential: string) {
 /** Switches wallet. The other wallet opens without a PIN only if it is still signed in on this device. */
 export async function selectPlatformWallet(id: string) {
   await mutate(() => { const c = read(); if (!c.accounts.some(a => a.id === id)) throw new Error("WALLET_NOT_FOUND"); epoch++; dispose(unlocked); unlocked = null; c.activeId = id; persist(c); });
-  if (!(await restoreDeviceSession())) { sessionEpoch++; publish(byId(id)); }
+  if (!(await restoreDeviceSession())) { sessionEpoch++; publish(selectedOf(byId(id))); }
   return { unlocked: platformWalletUnlocked() };
 }
+// ---- accounts of one recovery phrase ---------------------------------------------------------------------------
+
+/**
+ * Adds the next account of the active wallet's recovery phrase and opens it. The phrase is read with this device's open session,
+ * or with the PIN when the wallet isn't open here; the new account's addresses are saved so it can be checked every time it opens.
+ */
+export async function addPlatformAccount(label?: string, pin?: string): Promise<AccountSummary> {
+  const a = current(), start = epoch;
+  const dataKey = await dataKeyForChange(a, pin);
+  try {
+    const used = accountsOf(a).map(x => x.index);
+    const index = Math.max(...used) + 1;
+    if (index > MAX_ACCOUNT_INDEX) throw new Error(`You can keep up to ${MAX_ACCOUNT_INDEX + 1} accounts per recovery phrase.`);
+    const account = derivePlatformAccount(await openPhrase(a, dataKey), index);
+    const record: ExtraAccount = { index, label: (label ?? "").trim().slice(0, 32) || `Account ${index + 1}`, evm: account.evm.address, solana: account.solana.address };
+    let saved!: SavedAccount;
+    try {
+      await mutate(() => {
+        assertCurrent(start, a.id);
+        const c = read(), x = c.accounts.find(y => y.id === a.id)!;
+        x.extra = [...(x.extra ?? []), record]; x.selected = index;
+        persist(c); saved = x;
+      });
+      epoch++;
+      await open(saved, account, dataKey, epoch);
+    } catch (error) { if (unlocked !== account) dispose(account); throw error; }
+    return { ...record, hidden: false };
+  } finally { dataKey.fill(0); }
+}
+
+/** Opens another account of the active wallet's recovery phrase (the session or the PIN reads the phrase, as above). */
+export async function selectPlatformAccount(index: number, pin?: string) {
+  const a = current();
+  if (!accountsOf(a).some(x => x.index === index)) throw new Error("ACCOUNT_NOT_FOUND");
+  if ((a.selected ?? 0) === index && unlocked) return;
+  const dataKey = await dataKeyForChange(a, pin);
+  try {
+    let saved!: SavedAccount;
+    await mutate(() => { const c = read(), x = c.accounts.find(y => y.id === a.id); if (!x) throw new Error("WALLET_NOT_FOUND"); x.selected = index; persist(c); saved = x; });
+    epoch++; dispose(unlocked); unlocked = null;
+    const start = epoch;
+    const account = await accountFor(saved, dataKey, index);
+    await open(saved, account, dataKey, start);
+  } finally { dataKey.fill(0); }
+}
+
+/** Renames an account. Account 0's name is the wallet's own name. */
+export async function renamePlatformAccount(index: number, label: string) {
+  await mutate(() => {
+    const c = read(), a = c.accounts.find(x => x.id === c.activeId); if (!a) throw new Error("NO_PLATFORM_WALLET");
+    const name = label.trim().slice(0, 32);
+    if (index === 0) a.label = name || "My wallet";
+    else { const x = a.extra?.find(y => y.index === index); if (!x) throw new Error("ACCOUNT_NOT_FOUND"); x.label = name || `Account ${index + 1}`; }
+    persist(c); emit();
+  });
+}
+
+/** Hides an account from the lists, or shows it again. The open account and account 0 can't be hidden. Nothing is deleted. */
+export async function setPlatformAccountHidden(index: number, hidden: boolean) {
+  await mutate(() => {
+    const c = read(), a = c.accounts.find(x => x.id === c.activeId); if (!a) throw new Error("NO_PLATFORM_WALLET");
+    if (index === 0 || (a.selected ?? 0) === index) throw new Error("Switch to another account before hiding this one.");
+    const x = a.extra?.find(y => y.index === index); if (!x) throw new Error("ACCOUNT_NOT_FOUND");
+    if (hidden) x.hidden = true; else delete x.hidden;
+    persist(c); emit();
+  });
+}
+
 export async function renamePlatformWallet(id: string, label: string) {
   await mutate(() => { const c = read(), a = c.accounts.find(x => x.id === id); if (!a) throw new Error("WALLET_NOT_FOUND"); a.label = label.trim().slice(0, 32) || "My wallet"; persist(c); emit(); });
 }
@@ -507,7 +613,7 @@ export async function forgetPlatformWallet(pin: string) {
     store().removeItem(ATTEMPTS_PREFIX + a.id);
     await forgetDeviceSession(a.id);
     if (a.passkey) forgetPasskeyCredential(a.passkey.credential);
-    unpublish(a);
+    unpublish(selectedOf(a));
   });
 }
 

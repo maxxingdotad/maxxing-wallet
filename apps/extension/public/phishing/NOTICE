@@ -1,0 +1,6 @@
+hosts.txt is derived from the polkadot.js phishing list (the "deny" entries of https://polkadot.js.org/phishing/all.json),
+https://github.com/polkadot-js/phishing, licensed under the Apache License, Version 2.0:
+https://www.apache.org/licenses/LICENSE-2.0
+
+Changes: the entries are lower-cased, wildcards and trailing dots removed, duplicates dropped, and the list sorted.
+The MAXXING Wallet extension uses it to warn about and block known phishing sites.

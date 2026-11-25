@@ -33,14 +33,18 @@ export function mnemonicIsValid(mnemonic: string) {
   return validateMnemonic(normalizeMnemonic(mnemonic), wordlist);
 }
 
-function deriveSolana(seed: Uint8Array) {
-  const path = "m/44'/501'/0'/0'";
+/** The most accounts one recovery phrase opens here. */
+export const MAX_ACCOUNT_INDEX = 99;
+const checkedIndex = (index: number) => { if (!Number.isSafeInteger(index) || index < 0 || index > MAX_ACCOUNT_INDEX) throw new Error("ACCOUNT_INDEX_INVALID"); return index; };
+
+function deriveSolana(seed: Uint8Array, index = 0) {
+  const path = `m/44'/501'/${index}'/0'`;
   const I = hmac(sha512, new TextEncoder().encode("ed25519 seed"), seed);
   let key = I.slice(0, 32);
   let chain = I.slice(32, 64);
   I.fill(0);
   const hard = 0x80000000;
-  for (const segment of [44 | hard, 501 | hard, 0 | hard, 0 | hard]) {
+  for (const segment of [44 | hard, 501 | hard, (index | hard) >>> 0, 0 | hard]) {
     const data = new Uint8Array(37);
     data[0] = 0;
     data.set(key, 1);
@@ -59,11 +63,16 @@ function deriveSolana(seed: Uint8Array) {
   return { path, secretKey: pair.secretKey, address: bs58.encode(pair.publicKey) };
 }
 
-export function derivePlatformAccount(mnemonic: string): PlatformAccount {
+/**
+ * The keys of account `index` (0 by default) of a recovery phrase. Account n is EVM m/44'/60'/0'/0/n and Solana m/44'/501'/n'/0',
+ * the paths other wallets use for their n-th account, so the same phrase opens the same accounts elsewhere.
+ */
+export function derivePlatformAccount(mnemonic: string, index = 0): PlatformAccount {
+  checkedIndex(index);
   const phrase = normalizeMnemonic(mnemonic);
   if (!validateMnemonic(phrase, wordlist)) throw new Error("INVALID_RECOVERY_PHRASE");
   const seed = mnemonicToSeedSync(phrase);
-  const evmPath = "m/44'/60'/0'/0/0";
+  const evmPath = `m/44'/60'/0'/0/${index}`;
   const master=HDKey.fromMasterSeed(seed);
   const child = master.derive(evmPath);
   try {
@@ -74,7 +83,7 @@ export function derivePlatformAccount(mnemonic: string): PlatformAccount {
   return {
     mnemonic: phrase,
     evm: { path: evmPath, privateKeyBytes, address: account.address },
-    solana: deriveSolana(seed),
+    solana: deriveSolana(seed, index),
   };
   }finally{seed.fill(0);child.wipePrivateData();master.wipePrivateData();}
 }

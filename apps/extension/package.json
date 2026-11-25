@@ -1,0 +1,39 @@
+{
+  "name": "@maxxing/extension",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The MAXXING wallet as a browser extension: your keys on your device, every chain in one balance, and every request shown before you sign.",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/maxxingdotad/maxxing-wallet.git",
+    "directory": "apps/extension"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host localhost --port 8085 --strictPort",
+    "build": "tsc --noEmit && tsx scripts/build.mjs && tsx scripts/build.mjs firefox",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test tests/*.test.ts"
+  },
+  "dependencies": {
+    "@maxxing/wallet-core": "workspace:*",
+    "@maxxing/wallet-sdk": "workspace:*",
+    "bs58": "6.0.0",
+    "lucide-react": "0.544.0",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "viem": "2.37.3"
+  },
+  "devDependencies": {
+    "@types/chrome": "0.1.4",
+    "@types/react": "19.1.13",
+    "@types/react-dom": "19.1.9",
+    "fake-indexeddb": "6.2.5",
+    "tsx": "4.20.5",
+    "tweetnacl": "1.0.3",
+    "typescript": "5.9.2",
+    "vite": "7.1.5",
+    "@types/node": "22.15.0"
+  }
+}
