@@ -8,7 +8,7 @@ The extension pages' policy (built by `src/lib/csp.ts` into `manifest.json` at b
 
 ```
 default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:;
-connect-src 'self' https: http://localhost:* http://127.0.0.1:* http://[::1]:*;
+connect-src 'self' https: http://localhost:* http://127.0.0.1:*;
 object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'
 ```
 

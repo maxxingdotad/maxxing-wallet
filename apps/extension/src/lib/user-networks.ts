@@ -2,7 +2,7 @@
  * The user's own RPC endpoints and networks, as the leading wallets offer them:
  * - for any network, extra RPC URLs (tried before the registry's own) and a preferred one, with "reset to default";
  * - EVM networks the user adds (or approves when a site asks with wallet_addEthereumChain), always marked as added by them.
- * Every URL is checked before it is kept: https only (plain http only for this computer: localhost, 127.0.0.1, [::1]), and the
+ * Every URL is checked before it is kept: https only (plain http only for this computer: localhost, 127.0.0.1), and the
  * endpoint's own eth_chainId must be the network's. A URL can hold a provider's key, so it is never shown whole outside the network
  * screen, never written to Activity (only its host is), and never handed to websites.
  */
@@ -57,7 +57,7 @@ setEndpointGuard(checkEndpointOnce);
 export const forgetEndpointChecks = () => sessionChecks.clear();
 
 // ── Checking a URL ────────────────────────────────────────────────────────────────────────────────────────────────────────
-const LOCAL = new Set(["localhost", "127.0.0.1", "[::1]"]);
+const LOCAL = new Set(["localhost", "127.0.0.1"]); // matches csp.ts LOCAL_HTTP (Chrome's CSP can't name [::1])
 /** Why this URL can't be an RPC endpoint, or null when it can. */
 export function rpcUrlProblem(text: string): string | null {
   let url: URL;

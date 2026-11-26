@@ -28,7 +28,9 @@ export function connectOrigins(): string[] {
  * tests/no-leak.test.ts call fetch, each with public data only, and no outside script can run (script-src 'self'). No WebSocket.
  * Details: apps/extension/SECURITY.md.
  */
-export const LOCAL_HTTP = ["http://localhost:*", "http://127.0.0.1:*", "http://[::1]:*"];
+// No http://[::1]:*: Chrome rejects IPv6 literals in a CSP source list (it logs an error and ignores the entry), so
+// user-networks.ts doesn't accept [::1] either; localhost reaches the same node.
+export const LOCAL_HTTP = ["http://localhost:*", "http://127.0.0.1:*"];
 export const extensionCsp = () => [
   "default-src 'self'", "script-src 'self'", "style-src 'self'", "img-src 'self' data:", `connect-src 'self' https: ${LOCAL_HTTP.join(" ")}`,
   "object-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'",

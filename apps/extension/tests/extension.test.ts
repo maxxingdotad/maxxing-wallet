@@ -581,7 +581,8 @@ test("the pages connect over https (any endpoint, for the user's own RPCs), plai
   const csp = extensionCsp();
   assert.match(csp, /img-src 'self' data:;/);
   assert.match(csp, /script-src 'self';/, "scripts: the extension's own only");
-  assert.match(csp, /connect-src 'self' https: http:\/\/localhost:\* http:\/\/127\.0\.0\.1:\* http:\/\/\[::1\]:\*;/, "https anywhere (custom RPCs), http only on this computer");
+  assert.match(csp, /connect-src 'self' https: http:\/\/localhost:\* http:\/\/127\.0\.0\.1:\*;/, "https anywhere (custom RPCs), http only on this computer");
+  assert.ok(!csp.includes("[::1]"), "no IPv6 literal: Chrome rejects it in a CSP source list");
   assert.ok(!/connect-src[^;]*\bhttp:(\s|;|$)/.test(csp), "never plain http elsewhere");
   assert.ok(!/wss:/.test(csp));
 });
