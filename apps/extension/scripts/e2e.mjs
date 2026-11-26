@@ -38,10 +38,27 @@ const PORT = 8086, PASSWORD = "Orbit-Hat-2046"; // letters and digits: the one p
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok, detail }); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`); };
+/** A check that can't run here (named, with why); counted apart, never as a pass. */
+const skip = (name, why) => { results.push({ name, ok: true, skipped: true }); console.log(`SKIP  ${name}  (${why})`); };
+/** In CI (the public repo's workflow) the run must not depend on MAXXING's production API; locally it checks it live. */
+const IN_CI = !!process.env.CI;
 
 // ── The test site ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 const dapp = readFileSync(resolve(here, "tests/e2e/dapp.html"));
-const server = createServer((_, res) => { res.setHeader("content-type", "text/html"); res.end(dapp); }).listen(PORT, "127.0.0.1");
+// The test site, and (POST) a tiny JSON-RPC endpoint for the custom-RPC steps: /rpc-base answers as Base, /rpc-local as chain 31337.
+const server = createServer((req, res) => {
+  if (req.method === "POST" && req.url?.startsWith("/rpc-")) {
+    let text = ""; req.on("data", chunk => { text += chunk; }).on("end", () => {
+      const { id, method } = JSON.parse(text || "{}");
+      const result = method === "eth_chainId" ? (req.url === "/rpc-base" ? "0x2105" : "0x7a69") : method === "eth_blockNumber" ? "0x2a" : null;
+      res.setHeader("content-type", "application/json"); res.setHeader("access-control-allow-origin", "*");
+      res.end(JSON.stringify({ jsonrpc: "2.0", id, result }));
+    });
+    return;
+  }
+  if (req.method === "OPTIONS") { res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-headers": "content-type", "access-control-allow-methods": "POST" }); res.end(); return; }
+  res.setHeader("content-type", "text/html"); res.end(dapp);
+}).listen(PORT, "127.0.0.1");
 
 // ── Chrome over a DevTools pipe ───────────────────────────────────────────────────────────────────────────────────────────
 const profile = mkdtempSync(join(tmpdir(), "maxxing-e2e-profile-"));
@@ -140,9 +157,15 @@ const DEMO = {
 const DEMO_RPC = { eth_chainId: "0x2105", eth_getTransactionCount: "0x5", eth_estimateGas: "0xfde8", eth_getBlockByNumber: { baseFeePerGas: "0x989680" }, eth_maxPriorityFeePerGas: "0xf4240", eth_gasPrice: "0x1312d00", eth_blockNumber: "0x1" };
 const BASE_RPCS = ["https://mainnet.base.org/*", "https://base-rpc.publicnode.com/*", "https://public.1rpc.io/base*", "https://base.drpc.org/*"];
 async function demoBalances(sessionId) {
-  await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }, ...BASE_RPCS.map(urlPattern => ({ urlPattern, requestStage: "Request" }))] }, sessionId);
+  await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }, { urlPattern: "https://api.maxxing.ad/v1/config*" }, ...BASE_RPCS.map(urlPattern => ({ urlPattern, requestStage: "Request" }))] }, sessionId);
   listeners.push(message => {
     if (message.method !== "Fetch.requestPaused" || message.sessionId !== sessionId) return;
+    // The swap fee as admin would set it (0.85% to a sample address), for the swap review screenshot; Relay's quote is real.
+    if (message.params.request.url.startsWith("https://api.maxxing.ad/v1/config")) {
+      const values = { "extension.swapFee.enabled": true, "extension.swapFee.percent": 0.85, "extension.swapFee.recipient": "0x9999999999999999999999999999999999999999" };
+      void send("Fetch.fulfillRequest", { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }, { name: "access-control-allow-origin", value: "*" }], body: Buffer.from(JSON.stringify({ values })).toString("base64") }, sessionId);
+      return;
+    }
     if (!message.params.request.url.startsWith("https://api.maxxing.ad/")) {
       if (message.params.request.method !== "POST") { void send("Fetch.continueRequest", { requestId: message.params.requestId }, sessionId); return; }
       const body = JSON.parse(message.params.request.postData ?? "{}");
@@ -258,7 +281,8 @@ try {
   });
   const sentOrigin = () => { for (const id of priceRequests) { const h = sentHeaders.get(id); if (h) return h.origin ?? h.Origin ?? "(no Origin header)"; } return "(not seen)"; };
   const priceProbe = /\$(0\.9\d|1\.0\d)/.test(livePrice) ? "" : await popup.evaluate(`fetch("https://api.maxxing.ad/v1/public/prices?ids=eip155:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", { headers: { "x-maxxing-app": "maxxing-extension" }, credentials: "omit", referrerPolicy: "no-referrer" }).then(async r => r.status + " " + (await r.text()).slice(0, 160), e => "fetch failed: " + e.message)`);
-  check("the Data API gives the extension a live price (USDC on Base about $1)", /\$(0\.9\d|1\.0\d)/.test(livePrice), `${livePrice} ${priceProbe}${priceProbe ? ` origin sent: ${sentOrigin()}` : ""}`);
+  if (IN_CI) skip("the Data API gives the extension a live price (USDC on Base about $1)", "CI: depends on MAXXING's production API; checked in local runs");
+  else check("the Data API gives the extension a live price (USDC on Base about $1)", /\$(0\.9\d|1\.0\d)/.test(livePrice), `${livePrice} ${priceProbe}${priceProbe ? ` origin sent: ${sentOrigin()}` : ""}`);
   await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "7d").click()`);
   await popup.waitFor(`!document.querySelector('[data-testid="token-detail"] .sk')`, 30000);
   if (STORE_DEMO) {
@@ -274,6 +298,25 @@ try {
     await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
     await popup.waitFor(`!!document.querySelector('[data-testid="send-to"]')`);
     await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+    // Store screenshot: a swap of the sample ETH on Base into USDC, with Relay's real quote and MAXXING's fee on its own line.
+    await popup.waitFor(`!!document.querySelector('.dock [aria-label="Swap and bridge"]')`, 30000);
+    await popup.evaluate(`document.querySelector('.dock [aria-label="Swap and bridge"]').click()`);
+    await popup.waitFor(`document.querySelectorAll("select.swap-asset").length === 2 && [...document.querySelectorAll("select.swap-asset")[0].options].some(o => o.value === "eip155:8453|")`, 30000);
+    const pick = (i, value) => popup.evaluate(`(() => { const s = document.querySelectorAll("select.swap-asset")[${i}]; Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set.call(s, ${JSON.stringify(value)}); s.dispatchEvent(new Event("change", { bubbles: true })); })()`);
+    await pick(0, "eip155:8453|");
+    await popup.setInput(".swap-amount", "0.05");
+    await popup.waitFor(`[...document.querySelectorAll("select.swap-asset")[1].options].some(o => o.value.toLowerCase() === "eip155:8453|0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")`);
+    await pick(1, await popup.evaluate(`[...document.querySelectorAll("select.swap-asset")[1].options].find(o => o.value.toLowerCase() === "eip155:8453|0x833589fcd6edb6e08f4c7c32d4f71b54bda02913").value`));
+    await popup.waitFor(`!!document.querySelector('[data-testid="maxxing-fee"]')`, 45000);
+    await popup.shot("08l-swap-quote-fee");
+    const feeLine = await popup.evaluate(`document.querySelector('[data-testid="maxxing-fee"]').innerText`);
+    check("the swap quote shows MAXXING's fee on its own line (0.85% ≈ $x), from a real Relay quote", /MAXXING fee 0\.85%/.test(feeLine) && /\$/.test(feeLine), feeLine.replace(/\s+/g, " "));
+    await popup.clickWhenReady("Review swap");
+    await popup.waitFor(`document.body.innerText.includes("Review swap") && !!document.querySelector('[data-testid="maxxing-fee"]')`, 45000);
+    await popup.shot("08m-swap-review-fee");
+    await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+    await popup.waitFor(`!!document.querySelector('.dock [aria-label="Home"]')`);
+    await popup.evaluate(`document.querySelector('.dock [aria-label="Home"]').click()`);
   } else
   await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
   await popup.waitFor(`!!document.querySelector(".network-chip")`, 30000);
@@ -486,6 +529,42 @@ try {
   await popup.shot("15d-settings-about");
   const about = await popup.evaluate(`(() => { const t = document.querySelector('[data-testid="about"]').innerText; return { support: t.includes("Contact support"), source: t.includes("Public source code"), security: t.includes("Security policy"), version: /MAXXING Wallet \\d+\\.\\d+/.test(document.querySelector('[data-testid="version"]').textContent) }; })()`);
   check("Settings shows the version, support, public source and security policy", Object.values(about).every(Boolean), JSON.stringify(about));
+  // ── Networks: endpoints with live health, the user's own RPC (checked, first, then reset), and a custom network ───────────
+  await popup.evaluate(`[...document.querySelectorAll("button.row")].find(b => b.textContent.includes("Networks and RPC endpoints")).click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="networks"] [data-network="eip155:8453"]')`);
+  await popup.shot("15f-networks");
+  await popup.evaluate(`document.querySelector('[data-network="eip155:8453"]').click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="rpc-list"]') && !document.querySelector('[data-testid="rpc-list"]').innerText.includes("Checking")`, 30000);
+  const health = await popup.evaluate(`[...document.querySelectorAll('[data-testid="rpc-list"] .rpc-row')].map(r => r.querySelector("small").textContent)`);
+  check("each Base endpoint shows its health (latency and block, or not answering)", health.length >= 3 && health.every(t => /ms · block|Not answering/.test(t)) && health.some(t => /ms · block/.test(t)), `${health.length} endpoints`);
+  await popup.setInput('[data-testid="rpc-url"]', `http://localhost:${PORT}/rpc-local`);
+  await popup.clickWhenReady("Check and add");
+  await popup.waitFor(`/serves chain 31337, not 8453/.test(document.querySelector('[data-testid="network-detail"]').innerText)`, 30000);
+  check("an RPC for another chain is refused (eth_chainId must match)", true);
+  await popup.setInput('[data-testid="rpc-url"]', `http://localhost:${PORT}/rpc-base`);
+  await popup.clickWhenReady("Check and add");
+  await popup.waitFor(`document.querySelector('[data-testid="rpc-list"] .rpc-row')?.dataset.rpc === "localhost:${PORT}"`, 30000);
+  await popup.waitFor(`!document.querySelector('[data-testid="rpc-list"]').innerText.includes("Checking")`, 30000);
+  await popup.shot("15g-network-base-own-rpc");
+  check("the user's own RPC is checked, then tried first", await popup.evaluate(`document.querySelector('[data-testid="rpc-list"] .rpc-row').innerText.includes("Yours")`));
+  await popup.clickWhenReady("Reset to default");
+  await popup.waitFor(`document.querySelector('[data-testid="rpc-list"] .rpc-row')?.dataset.rpc !== "localhost:${PORT}"`);
+  check("reset to default drops the user's RPC", !(await popup.evaluate(`[...document.querySelectorAll('[data-testid="rpc-list"] .rpc-row')].some(r => r.dataset.rpc === "localhost:${PORT}")`)));
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="networks"]')`);
+  await popup.click("Add a network");
+  await popup.waitFor(`!!document.querySelector('[data-testid="add-network"]')`);
+  const fields = { "Network name": "Local Test", "RPC URL": `http://localhost:${PORT}/rpc-local`, "Chain ID": "31337", "Coin symbol": "TEST" };
+  for (const [label, value] of Object.entries(fields)) await popup.evaluate(`(() => { const l = [...document.querySelectorAll('[data-testid="add-network"] label')].find(x => x.textContent.startsWith(${JSON.stringify(label)})); const el = l.querySelector("input"); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await popup.shot("15h-add-network");
+  await popup.clickWhenReady("Add network");
+  await popup.waitFor(`!!document.querySelector('[data-testid="network-detail"]') && document.body.innerText.includes("Added by you")`, 30000);
+  await popup.shot("15i-custom-network");
+  check("a custom network is added after its chain id is checked, marked Added by you", await popup.evaluate(`document.body.innerText.includes("Chain ID 31337")`));
+  await popup.clickWhenReady("Remove this network");
+  await popup.waitFor(`!!document.querySelector('[data-testid="networks"]') && !document.querySelector('[data-network="eip155:31337"]')`);
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Export private keys")`);
   await popup.evaluate(`document.querySelector('[role="switch"][aria-label="Hide balances"]').click()`);
   await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
   await popup.waitFor(`!!document.querySelector('[data-testid="total"]')`, 30000);
@@ -547,7 +626,7 @@ try {
   await sleep(500);
   rmSync(profile, { recursive: true, force: true });
   rmSync(dist, { recursive: true, force: true });
-  const failed = results.filter(r => !r.ok);
-  console.log(`\n${results.length - failed.length}/${results.length} passed. Screenshots: ${shots}`);
+  const failed = results.filter(r => !r.ok), skipped = results.filter(r => r.skipped);
+  console.log(`\n${results.length - failed.length - skipped.length}/${results.length - skipped.length} passed${skipped.length ? `, ${skipped.length} skipped` : ""}. Screenshots: ${shots}`);
   process.exit(failed.length ? 1 : 0);
 }

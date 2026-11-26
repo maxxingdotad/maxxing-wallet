@@ -15,6 +15,8 @@ import { ActivityView } from "./Activity";
 import { ConnectedSites } from "./Sites";
 import { ApprovalsView } from "./Approvals";
 import { ChangePassword } from "./Security";
+import { AddNetwork, NetworkDetail, NetworksView } from "./Networks";
+import { Network as NetworkIcon } from "lucide-react";
 import { LINKS, listNames, t } from "../lib/strings";
 import { networks } from "../lib/chains";
 import { NO_PREFS, type AssetPrefs } from "../lib/assets";
@@ -30,7 +32,7 @@ const asAccount = (w: WalletSummary, index = w.selected, value = 0): Account => 
   return { id: `${w.id}:${x.index}`, name: x.label, color: colorFor(`${w.id}:${x.index}`), evm: x.evm, solana: x.solana, usd: value };
 };
 
-type View = { name: "home" } | { name: "old-wallets" } | { name: "manage-assets" } | { name: "token"; holding: Holding; all: Holding[] } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" } | { name: "sites" } | { name: "approvals" } | { name: "change-password" };
+type View = { name: "home" } | { name: "old-wallets" } | { name: "manage-assets" } | { name: "token"; holding: Holding; all: Holding[] } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" } | { name: "sites" } | { name: "approvals" } | { name: "change-password" } | { name: "networks" } | { name: "network"; networkId: string } | { name: "add-network" };
 
 export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
   const [snap, setSnap] = useState<wallet.WalletSnapshot | null>(null);
@@ -68,6 +70,9 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
     case "activity": return frame(<ActivityView account={{ evm: active.evm, solana: active.solana }} onTab={onTab} />);
     case "settings": return frame(<SettingsView snap={snap} mode={mode} go={go} onTab={onTab} toast={showToast} onChanged={refresh} />);
     case "export": return frame(<ExportFlow kind={view.kind} onClose={() => go({ name: "settings" })} />);
+    case "networks": return frame(<NetworksView onBack={() => go({ name: "settings" })} onOpen={networkId => go({ name: "network", networkId })} onAdd={() => go({ name: "add-network" })} />);
+    case "network": return frame(<NetworkDetail networkId={view.networkId} onBack={() => go({ name: "networks" })} toast={showToast} />);
+    case "add-network": return frame(<AddNetwork onBack={() => go({ name: "networks" })} onAdded={networkId => go({ name: "network", networkId })} toast={showToast} />);
     case "change-password": return frame(<ChangePassword onDone={() => go({ name: "settings" })} toast={showToast} />);
     case "sites": return frame(<ConnectedSites snap={snap} onBack={() => go({ name: "settings" })} toast={showToast} />);
     case "approvals": return frame(<ApprovalsView account={{ evm: active.evm }} onBack={() => go({ name: "settings" })} toast={showToast} />);
@@ -344,6 +349,7 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
       <div className="section-head"><h2>{t("settings.privacy")}</h2></div>
       {toggle(t("settings.hideBalances"), t("settings.hideBalances.note"), !!prefs?.hideBalances, () => void save({ hideBalances: !prefs?.hideBalances }))}
       <div className="section-head"><h2>{t("settings.networks")}</h2></div>
+      <div className="card rows" style={{ marginBottom: 8 }}>{item(<NetworkIcon size={18} />, t("settings.networksManage"), () => go({ name: "networks" }))}</div>
       {toggle(t("settings.testnets"), t("settings.testnets.note", { names: listNames(networks(true).filter(n => n.testnet).map(n => n.name)) }), !!prefs?.showTestnets, () => void save({ showTestnets: !prefs?.showTestnets }))}
       <div className="card" style={{ padding: 12, marginTop: 8 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{t("settings.currency")}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>{t("settings.currency.note")}</div></div>
       <div className="section-head"><h2>{t("settings.sites")}</h2></div>

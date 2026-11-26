@@ -11,6 +11,7 @@ import { isSolanaTransactionMessage, parseSolanaTransaction, signSolanaTransacti
 import { approvalView, type ApprovalView, type SigningMethod } from "@maxxing/wallet-core/request-view";
 import { account, activity, kept, lastActive } from "./store";
 import type { SiteMethod } from "./protocol";
+import { loadUserNetworks } from "./user-networks";
 
 export type WalletSnapshot = { accounts: vault.WalletSummary[]; activeId: string | null; unlocked: boolean; public: { evm: string; solana: string } | null; storageError: string | null };
 
@@ -39,6 +40,7 @@ let started = false;
  * user's own clicks and keys do (a site can open the approval window, but it can't click in it).
  */
 export async function start(): Promise<WalletSnapshot> {
+  await loadUserNetworks(); // the user's own RPC endpoints and networks, before any screen lists networks
   if (!started) {
     started = true;
     vault.setWalletPublishing(false);
@@ -126,7 +128,7 @@ function asCoreRequest(method: Exclude<SiteMethod, "connect">, params: any): { m
       if (!(bytes instanceof Uint8Array)) throw new Error("SOLANA_TX_INVALID");
       return { method: "solana.signBytes", params: { bytes: bytes.subarray(parseSolanaTransaction(bytes).messageOffset) } };
     }
-    case "evm.switchChain": throw new Error("Switching networks signs nothing.");
+    case "evm.switchChain": case "evm.addChain": throw new Error("Switching or adding networks signs nothing.");
   }
 }
 

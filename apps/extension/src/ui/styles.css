@@ -395,3 +395,10 @@ button:focus-visible, [role="switch"]:focus-visible, input:focus-visible, select
 .asset-row, .activity-row, .site-row, .approval-row { transition: background .15s var(--ease); }
 .asset-row:hover, .site-row:hover { background: var(--surface-2); }
 @media (prefers-reduced-motion: reduce) { .popup > .scroll, .popup > form.scroll { animation: none; } }
+
+/* Settings → Networks: each endpoint with a health dot (quick, slow, down) and a radio for the one tried first. */
+.rpc-row input[type=radio] { accent-color: var(--text); width: 16px; height: 16px; flex-shrink: 0; }
+.health-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--line-strong); flex-shrink: 0; }
+.health-dot.good { background: var(--text); box-shadow: 0 0 0 3px rgb(244 244 245 / .08); }
+.health-dot.slow { background: #F0B90B; }
+.health-dot.down { background: var(--negative); }

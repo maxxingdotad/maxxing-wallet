@@ -4,11 +4,12 @@ import { knownTokens, KNOWN_SOLANA_MINTS } from "@maxxing/wallet-core/chains";
 import { Dock, usd, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
 import { loadPortfolio } from "../lib/balances";
-import { explorerTx, networks, type Network } from "../lib/chains";
+import { explorerTx, networkLabel, networks, type Network } from "../lib/chains";
 import { parseUnits } from "../lib/send";
 import { formatUnits } from "viem";
 import { execute, gaslessAvailable, prepare, quote, status, type Asset, type Prepared, type Quote } from "../lib/relay";
 import { settings } from "../lib/store";
+import { feePercent } from "../lib/swap-fee";
 import type * as wallet from "../lib/wallet";
 
 type Account = wallet.WalletSnapshot["accounts"][number];
@@ -20,6 +21,12 @@ function assetsOn(network: Network): Asset[] {
   return [native, ...knownTokens(network.networkId).map(t => ({ network, address: t.address, symbol: t.symbol, decimals: t.decimals }))];
 }
 const key = (a: Asset) => `${a.network.networkId}|${a.address ?? ""}`;
+
+/** MAXXING's fee on its own line: the rate and its value in dollars (from the quote, checked against the rate). */
+function MaxxingFeeRow({ q }: { q: Quote }) {
+  if (!q.maxxingFee) return null;
+  return <div className="fact" data-testid="maxxing-fee"><span>MAXXING fee {feePercent(q.maxxingFee.bps)}</span><b>{q.maxxingFee.usd === null ? "—" : `≈ ${q.maxxingFee.usd < 0.01 ? "< $0.01" : usd(q.maxxingFee.usd)}`}</b></div>;
+}
 
 export function SwapView({ account, onTab }: { account: Account; onTab: (t: DockTab) => void; toast: (t: string) => void }) {
   const [holdings, setHoldings] = useState<Holding[] | null>(null);
@@ -99,12 +106,13 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
       <PageHead title="Review swap" onBack={() => setReviewing(false)} />
       <div className="scroll stack" style={{ paddingBottom: 130 }}>
         <h1 className="ask-title" style={{ margin: "4px 2px 0" }}>{amount} {from.asset.symbol} → {q.amountOut} {to.symbol}</h1>
-        <p className="ask-sub" style={{ margin: "0 2px" }}>{from.asset.network.name} → {to.network.name} · through Relay</p>
+        <p className="ask-sub" style={{ margin: "0 2px" }}>{networkLabel(from.asset.network)} → {networkLabel(to.network)} · through Relay</p>
         {(q.impactPercent ?? 0) <= -3 && <div className="alert danger"><AlertTriangle size={17} /><span><b>High price impact: {q.impactPercent?.toFixed(2)}%.</b> You'd get noticeably less than the amount is worth.</span></div>}
         <div className="card facts">
           <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to.symbol}</b></div>
           <div className="fact"><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--positive)" }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
           <div className="fact"><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
+          <MaxxingFeeRow q={q} />
           {prepared && (prepared.gasless
             ? <div className="fact"><span>Network fee</span><b>Paid from the swap · no {prepared.nativeSymbol} needed</b></div>
             : <div className="fact"><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
@@ -149,7 +157,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
             <input className="swap-amount num" style={{ background: "none", border: 0, outline: "none", width: "55%", color: "var(--text)" }} inputMode="decimal" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} />
             <select className="swap-asset" style={{ maxWidth: 150 }} value={fromKey} onChange={e => setFromKey(e.target.value)}>
               <option value="">Choose</option>
-              {fromAssets.map(x => <option key={key(x.asset)} value={key(x.asset)}>{x.asset.symbol} · {x.asset.network.name}</option>)}
+              {fromAssets.map(x => <option key={key(x.asset)} value={key(x.asset)}>{x.asset.symbol} · {networkLabel(x.asset.network)}</option>)}
             </select>
           </div>
           {from && <label style={{ marginTop: 6 }}><span>on {from.asset.network.name}</span><button type="button" style={{ color: "var(--text-2)", fontWeight: 600, fontSize: 12 }} onClick={() => setAmount(from.holding.amount.replace(/,/g, ""))}>Max</button></label>}
@@ -161,7 +169,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
             <span className="swap-amount num">{q ? q.amountOut : "0"}</span>
             <select className="swap-asset" style={{ maxWidth: 150 }} value={toKey} onChange={e => setToKey(e.target.value)}>
               <option value="">Choose</option>
-              {toAssets.map(a => <option key={key(a)} value={key(a)}>{a.symbol} · {a.network.name}</option>)}
+              {toAssets.map(a => <option key={key(a)} value={key(a)}>{a.symbol} · {networkLabel(a.network)}</option>)}
             </select>
           </div>
           {to && <label style={{ marginTop: 6 }}><span>on {to.network.name}{to.network.family === "SOLANA" ? " (to your Solana address)" : ""}</span><span className="num">{q?.amountOutUsd != null ? usd(q.amountOutUsd) : ""}</span></label>}
@@ -173,7 +181,8 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
         {q && <div className="card facts" style={{ marginTop: 8 }}>
           <div className="fact"><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--positive)" }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
           <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to?.symbol}</b></div>
-          <div className="fact"><span>Fees</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
+          <div className="fact"><span>Relay's fees</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
+          <MaxxingFeeRow q={q} />
         </div>}
         {canGasless && from && <label className="card" style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, marginTop: 8, fontSize: 13, cursor: "pointer" }} data-testid="gasless-toggle">
           <input type="checkbox" checked={gasless} onChange={e => setGaslessChoice(e.target.checked)} />

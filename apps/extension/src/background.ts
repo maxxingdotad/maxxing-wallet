@@ -16,8 +16,9 @@ import { checkSite } from "./lib/phishing";
 import { refreshSuffixList, suffixRules } from "./lib/psl";
 import { ERRORS, LIMITS, isSiteMethod, type Pending, type SiteAnswer, type SiteRequest, type TabAnswer } from "./lib/protocol";
 import { account, activity, declines, grantedTo, moveOldRecords, settings, sites, trustedLookalikes } from "./lib/store";
-import { decode } from "./lib/codec";
+import { decode, encode } from "./lib/codec";
 import { evmNetwork } from "./lib/chains";
+import { loadUserNetworks, parseAddChain } from "./lib/user-networks";
 
 // Session storage (open sessions, the open account, pending requests) is for the extension's own pages, never content scripts.
 void chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })?.catch?.(() => {});
@@ -89,18 +90,29 @@ async function handleSiteRequest(message: SiteRequest, sender: chrome.runtime.Me
   }
   if (waiting) { if (waiting.windowId !== undefined) void chrome.windows.update(waiting.windowId, { focused: true }).catch(() => {}); return { done: true, ok: false, error: ERRORS.busy }; }
 
-  const [permission, open] = await Promise.all([sites.get(origin), account.read()]);
-  if (message.method === "evm.switchChain") {
-    // A network the registry lists (test networks only when they're on). A site that isn't connected switches on its own page:
-    // nothing is at stake. A connected site's network is kept per site, and changing it asks the user.
-    const chainId = Number((decode(message.params) as { chainId?: unknown } | null)?.chainId);
+  const [permission, open] = await Promise.all([sites.get(origin), account.read(), loadUserNetworks()]);
+  // A network the registry lists (test networks only when they're on), or one the user added. A site that isn't connected switches
+  // on its own page: nothing is at stake. A connected site's network is kept per site, and changing it asks the user.
+  const switchTo = async (chainId: number, request: typeof base): Promise<SiteAnswer> => {
     const network = Number.isSafeInteger(chainId) ? evmNetwork(chainId) : null;
     if (!network) return { done: true, ok: false, error: ERRORS.unknownChain };
     if (network.testnet && !(await settings.read()).showTestnets) return { done: true, ok: false, error: ERRORS.testnetsOff };
     if (!permission || permission.chainId === chainId) return { done: true, ok: true, result: null };
     if (!permission.chainId) { await sites.setChain(origin, chainId); return { done: true, ok: true, result: null }; } // its first network: no prompt
     if (await overLimit(origin)) return { done: true, ok: false, error: ERRORS.tooMany };
-    await openApproval({ ...base, kind: "switch" });
+    await openApproval({ ...request, method: "evm.switchChain", params: encode({ chainId }), kind: "switch" });
+    return { done: false };
+  };
+  if (message.method === "evm.switchChain") return switchTo(Number((decode(message.params) as { chainId?: unknown } | null)?.chainId), base);
+  if (message.method === "evm.addChain") {
+    // wallet_addEthereumChain (EIP-3085). A network the wallet has (the registry's or one the user added): a switch with the usual
+    // switch rules, and the site's endpoints are ignored (the wallet keeps its own). A new one always asks the user; the approval
+    // window then checks the endpoint's chain id before keeping it.
+    const asked = parseAddChain(decode(message.params));
+    if (!asked) return { done: true, ok: false, error: ERRORS.badNetwork };
+    if (evmNetwork(asked.chainId)) return switchTo(asked.chainId, base);
+    if (await overLimit(origin)) return { done: true, ok: false, error: ERRORS.tooMany };
+    await openApproval({ ...base, kind: "add-network" });
     return { done: false };
   }
   if (message.method === "connect") {
@@ -161,7 +173,13 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const origin = sender.origin ?? "";
     // A connected site learns the addresses; a listed one never does (a look-alike only got connected by passing the warning).
     Promise.all([sites.get(origin), account.read(), blocklist(), suffixRules()])
-      .then(([permission, open, listed, rules]) => reply(checkSite(origin, listed, rules).kind !== "scam" && grantedTo(permission, open) ? { evm: open.evm, solana: open.solana, ...(permission.chainId ? { chainId: permission.chainId } : {}) } : null), () => reply(null));
+      .then(async ([permission, open, listed, rules]) => {
+        if (checkSite(origin, listed, rules).kind === "scam" || !grantedTo(permission, open)) return reply(null);
+        // Networks this site added earlier come back to its page, with the endpoints the site itself gave (never the user's own).
+        const networks = (await loadUserNetworks()).custom.filter(c => c.source === "site" && c.origin === origin)
+          .map(c => ({ chainId: c.evmChainId, name: c.name, nativeSymbol: c.nativeSymbol, rpcUrls: c.rpcUrls, ...(c.explorerUrl ? { explorerUrl: c.explorerUrl } : {}) }));
+        reply({ evm: open.evm, solana: open.solana, ...(permission.chainId ? { chainId: permission.chainId } : {}), ...(networks.length ? { networks } : {}) });
+      }, () => reply(null));
     return true;
   }
   if (message?.type === "clear-clipboard-later" && fromExtensionPage(sender) && typeof message.hash === "string" && /^[0-9a-f]{64}$/.test(message.hash)) {

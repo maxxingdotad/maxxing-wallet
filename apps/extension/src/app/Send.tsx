@@ -4,7 +4,7 @@ import { formatUnits } from "viem";
 import { TokenMark, short, usd, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
 import { loadPortfolio } from "../lib/balances";
-import { explorerTx, networkById, networks } from "../lib/chains";
+import { explorerTx, networkById, networkLabel, networks } from "../lib/chains";
 import { book, checkRecipient, draftEvmMaxSend, draftEvmSend, draftSolSend, maxFeeOf, maxSendable, same, sendEvm, sendSol, sendStatus, settleSendActivity, validRecipient, type EvmDraft, type RecipientCheck, type Saved, type SolDraft } from "../lib/send";
 import { isEnsName, resolveEns } from "../lib/ens";
 import { price } from "../lib/market";
@@ -137,14 +137,16 @@ export function SendView({ holding: initial, account, onBack, toast }: { holding
       <PageHead title="Review" onBack={() => setDraft(null)} />
       <div className="scroll stack" style={{ paddingBottom: 130 }}>
         <h1 className="ask-title" style={{ margin: "4px 2px 0" }}>{s?.tokenCall?.text ?? (s ? `Send ${s.amount}` : `Send ${amount} SOL`)}</h1>
-        <p className="ask-sub" style={{ margin: "0 2px" }}>To {draft.check.contact ?? ensName ?? short(sentTo)} on {network?.name}</p>
+        <p className="ask-sub" style={{ margin: "0 2px" }}>To {draft.check.contact ?? ensName ?? short(sentTo)} on {network && networkLabel(network)}</p>
+        {network?.custom && <div className="alert warn"><AlertTriangle size={17} /><span><b>{networkLabel(network)}.</b> MAXXING doesn't list or check this network: its endpoint decides what you see. Send only if you trust it.</span></div>}
         <div className="card" style={{ padding: 12 }}><div className="addr" data-testid="review-recipient">{sentTo}</div>{ensName && <small className="muted" style={{ fontSize: 12 }}>{ensName} points to this address now. Check it before you confirm.</small>}</div>
         {draft.check.lookalike && <div className="alert danger"><AlertTriangle size={17} /><span><b>This address looks like one you've used, but it's different.</b> Scammers send dust from look-alike addresses so you copy theirs. Check every character. Known: {short(draft.check.lookalike)}</span></div>}
         {draft.check.firstTime && !draft.check.lookalike && <div className="alert warn"><AlertTriangle size={17} /><span><b>First time sending to this address.</b> Check it with the person you're paying before you confirm.</span></div>}
         {draft.large && <div className="alert warn"><AlertTriangle size={17} /><span><b>This is a large share of your {holding?.symbol}.</b> Make sure the amount is right.</span></div>}
         <div className="card facts">
           <div className="fact"><span>From</span><b>{account.label}</b></div>
-          <div className="fact"><span>Network</span><b>{network?.name}</b></div>
+          <div className="fact"><span>Network</span><b>{network && networkLabel(network)}</b></div>
+          {draft.evm?.feeCapped && <div className="fact" data-testid="fee-capped"><span>Tip (added network)</span><b>capped at 2 gwei</b></div>}
           {s && <div className="fact"><span>Network fee, at most</span><b>{s.maxFee ?? "—"}{feeUsd !== null && <span className="muted" style={{ fontSize: 12 }}> ≈ {feeUsd < 0.01 ? "< $0.01" : usd(feeUsd)}</span>}</b></div>}
           {draft.sol && <div className="fact"><span>Network fee</span><b>0.000005 SOL{feeUsd !== null && <span className="muted" style={{ fontSize: 12 }}> ≈ {feeUsd < 0.01 ? "< $0.01" : usd(feeUsd)}</span>}</b></div>}
           {draft.evm && <div className="fact"><span>Nonce</span><b>{String(draft.evm.transaction.nonce)}</b></div>}

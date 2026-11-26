@@ -18,6 +18,13 @@ export function chainError(code: number | undefined, message: string) {
 /** Waits between rounds over the endpoints: none before the first, then these. Tests set them to zero. */
 export const RETRY_WAITS_MS = [400, 1500];
 const preferred = new Map<string, string>();
+/**
+ * A check an endpoint must pass before it is used (user-networks.ts: a user's own RPC must still serve its network's chain id the
+ * first time it's used in a session). An endpoint that fails it is skipped, like one that is down.
+ */
+type EndpointGuard = (url: string) => Promise<boolean>;
+let guard: EndpointGuard | null = null;
+export const setEndpointGuard = (next: EndpointGuard | null) => { guard = next; };
 
 export async function rpc<T>(urls: readonly string[], method: string, params: unknown[] = [], timeoutMs = 10_000): Promise<T> {
   if (!urls.length) throw new RpcError("No public endpoint for this network.");
@@ -28,6 +35,7 @@ export async function rpc<T>(urls: readonly string[], method: string, params: un
   for (let round = 0; round <= RETRY_WAITS_MS.length; round++) {
     if (round > 0) await new Promise(r => setTimeout(r, RETRY_WAITS_MS[round - 1]));
     for (const url of order) {
+      if (guard && !(await guard(url).catch(() => true))) { last = new RpcError("An endpoint no longer serves this network."); continue; }
       const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });

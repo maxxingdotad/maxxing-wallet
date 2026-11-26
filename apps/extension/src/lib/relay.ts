@@ -11,8 +11,8 @@ import { evmNetwork, type Network } from "./chains";
 import { rpc, RpcError, sendSigned } from "./rpc";
 import { activity } from "./store";
 import { approvalInTransaction, approvals } from "./approvals";
+import { MAX_FEE_BPS, checkAppFee, swapFee, type SwapFee } from "./swap-fee";
 import PINNED from "./relay-pinned.json";
-import { browserRpcUrls } from "@maxxing/wallet-sdk";
 
 export const RELAY_API = "https://api.relay.link";
 export const RELAY_SOLANA_CHAIN_ID = 792703809;
@@ -29,6 +29,8 @@ export type Quote = {
   requestId: string | null; steps: RelayStep[]; amountRaw: bigint; gasless: boolean; fromChainId: number; toChainId: number;
   amountIn: string; amountOut: string; minimumOut: string | null; amountOutUsd: number | null; amountInUsd: number | null;
   impactPercent: number | null; timeSeconds: number | null; feesUsd: number | null; rate: string | null;
+  /** MAXXING's fee on this swap (null: none), checked against the quote: its rate in basis points and its value in dollars. */
+  maxxingFee: { bps: number; usd: number | null } | null;
 };
 
 /**
@@ -36,10 +38,13 @@ export type Quote = {
  * amount, Relay sends the transaction and takes the network fee out of the swap, so no ETH is needed. Tokens or routes that would
  * need a lasting allowance (EIP-2612, Permit2) are refused at review, not signed.
  */
-export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; user: string; recipient: string; slippageBps?: number; gasless?: boolean }): Promise<Quote> {
+export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; user: string; recipient: string; slippageBps?: number; gasless?: boolean; fee?: SwapFee }): Promise<Quote> {
   if (input.from.network.family !== "EVM") throw new Error("Swaps from Solana come next. Swap from an EVM chain for now.");
   const gasless = !!input.gasless && input.from.address !== null;
+  // MAXXING's fee (admin's setting, capped at 2%) as Relay's app fee: it rides inside the trade, paid to the recipient's Relay balance.
+  const fee = input.fee === undefined ? await swapFee() : input.fee;
   const body = {
+    ...(fee ? { appFees: [{ recipient: fee.recipient, fee: String(Math.min(fee.bps, MAX_FEE_BPS)) }] } : {}),
     user: input.user, recipient: input.recipient, refundTo: input.user,
     originChainId: relayChainId(input.from.network), destinationChainId: relayChainId(input.to.network),
     originCurrency: relayCurrency(input.from), destinationCurrency: relayCurrency(input.to),
@@ -56,6 +61,8 @@ export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; 
   if (!same(raw?.details?.recipient, input.recipient, input.to.network.family)) throw new Error("Relay's quote pays someone other than you. Nothing was signed.");
   if (Number(out?.currency?.chainId) !== relayChainId(input.to.network) || !same(out?.currency?.address, relayCurrency(input.to), input.to.network.family))
     throw new Error("Relay's quote delivers a different token or network than you chose. Nothing was signed.");
+  // The fee it charges must be the one shown (or none when none is shown): checked here, before anything is prepared or signed.
+  const feeUsd = checkAppFee(raw, fee, { amountRaw: input.amountRaw, currency: relayCurrency(input.from) });
   const num = (v: unknown) => v == null || !Number.isFinite(Number(v)) ? null : Number(v);
   return {
     requestId: raw?.steps?.find((s: any) => s?.requestId)?.requestId ?? raw?.steps?.flatMap((s: any) => s?.items ?? []).find((i: any) => i?.data?.post?.body?.requestId)?.data.post.body.requestId ?? null,
@@ -65,8 +72,10 @@ export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; 
     minimumOut: out?.minimumAmount != null && out?.currency?.decimals != null ? (Number(out.minimumAmount) / 10 ** out.currency.decimals).toPrecision(6) : null,
     amountOutUsd: num(out?.amountUsd), amountInUsd: num(inn?.amountUsd),
     impactPercent: num(raw?.details?.totalImpact?.percent), timeSeconds: num(raw?.details?.timeEstimate),
-    feesUsd: ["gas", "relayer", "app"].reduce<number | null>((sum, k) => { const v = num(raw?.fees?.[k]?.amountUsd); return v === null ? sum : (sum ?? 0) + v; }, null),
+    // Relay's own fees (network and relayer); MAXXING's fee is shown on its own line.
+    feesUsd: ["gas", "relayer"].reduce<number | null>((sum, k) => { const v = num(raw?.fees?.[k]?.amountUsd); return v === null ? sum : (sum ?? 0) + v; }, null),
     rate: raw?.details?.rate != null ? String(raw.details.rate) : null,
+    maxxingFee: fee ? { bps: fee.bps, usd: feeUsd } : null,
   };
 }
 
@@ -154,7 +163,7 @@ export async function gaslessAvailable(pay: Asset): Promise<boolean> {
   const chain = evmNetwork(relayChainId(pay.network));
   if (!chain) return false;
   const { authorizers } = await relayContracts(relayChainId(pay.network)).catch(() => ({ authorizers: new Set<string>() })); // empty when paused
-  for (const spender of authorizers) if (await eip3009Supported(browserRpcUrls(chain), pay.address, spender)) return true;
+  for (const spender of authorizers) if (await eip3009Supported(chain.rpc, pay.address, spender)) return true;
   return false;
 }
 /** Relay's contracts for a network, checked against the pinned file. Only a good answer is kept; a failed read is tried again next time. */
@@ -242,7 +251,7 @@ export async function prepare(q: Quote, from: string, pay: Asset): Promise<Prepa
   const chainId = relayChainId(pay.network);
   const chain = evmNetwork(chainId);
   if (!chain) throw new Error(`Relay asked for a network the wallet doesn't know (${chainId}).`);
-  const urls = browserRpcUrls(chain);
+  const urls = chain.rpc;
   const contracts = await relayContracts(chainId);
   const [nonce, block, tip] = await Promise.all([
     rpc<string>(urls, "eth_getTransactionCount", [from, "pending"]).then(Number),

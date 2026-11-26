@@ -13,6 +13,7 @@ const en = {
   "settings.hideBalances": "Hide balances",
   "settings.hideBalances.note": "Totals and amounts show as dots until you turn this off.",
   "settings.networks": "Networks",
+  "settings.networksManage": "Networks and RPC endpoints",
   "settings.testnets": "Show test networks",
   "settings.testnets.note": "{names}.",
   "settings.currency": "Currency",

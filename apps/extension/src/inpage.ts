@@ -4,7 +4,7 @@
  * Every request goes to the extension through the content script; nothing here ever holds a key.
  */
 import { ConnectionStore, MaxxingEthereumProvider, MaxxingSolanaWallet, SDK_CHAINS, announceProvider, networksFor, registerWallet } from "@maxxing/wallet-sdk";
-import { PAGE_CHANNEL, type PageEvent, type PageRequest, type PageResponse, type SiteMethod } from "./lib/protocol";
+import { PAGE_CHANNEL, type PageEvent, type PageRequest, type PageResponse, type SiteMethod, type SiteNetwork } from "./lib/protocol";
 
 type Waiting = { resolve: (value: unknown) => void; reject: (error: Error) => void };
 const waiting = new Map<string, Waiting>();
@@ -34,6 +34,8 @@ window.addEventListener("message", event => {
     const next = c && /^0x[0-9a-fA-F]{40}$/.test(c.evm) ? { evm: c.evm as `0x${string}`, solana: c.solana } : null;
     const now = store.connection;
     if (!next !== !now || (next && now && (next.evm.toLowerCase() !== now.evm.toLowerCase() || next.solana !== now.solana))) store.set(next);
+    // Networks this site added before (approved by the user), so the provider knows them again after a reload.
+    for (const n of c?.networks ?? []) learn(n);
     // The network the wallet keeps for this site (chosen in the wallet, or approved there): the provider moves to it.
     if (next && typeof c?.chainId === "number" && c.chainId !== ethereum.network.chainId) void switchHere(c.chainId).catch(() => {});
     return;
@@ -54,12 +56,25 @@ const ethereum = new MaxxingEthereumProvider(transport, store as never, networks
 // the wallet, and changing it asks the user; a site that isn't connected switches on its own (nothing is at stake).
 const local = ethereum.request.bind(ethereum);
 const switchHere = (chainId: number) => local({ method: "wallet_switchEthereumChain", params: [{ chainId: `0x${chainId.toString(16)}` }] });
+/** A network the provider didn't know (one a site added, approved in the wallet), with the site's own public endpoints. */
+function learn(n: SiteNetwork) {
+  if (!Number.isSafeInteger(n?.chainId) || networks.some(x => x.chainId === n.chainId)) return;
+  const rpcUrls = (n.rpcUrls ?? []).filter(u => typeof u === "string" && u.startsWith("https://"));
+  if (rpcUrls.length) networks.push({ chainId: n.chainId, name: String(n.name), nativeSymbol: String(n.nativeSymbol), rpcUrls, ...(n.explorerUrl ? { explorerUrl: n.explorerUrl } : {}) });
+}
 ethereum.request = async args => {
   if (args?.method !== "wallet_switchEthereumChain" && args?.method !== "wallet_addEthereumChain") return local(args);
-  const first = (Array.isArray(args.params) ? args.params[0] : args.params) as { chainId?: unknown } | undefined;
+  const first = (Array.isArray(args.params) ? args.params[0] : args.params) as { chainId?: unknown; chainName?: unknown; nativeCurrency?: { symbol?: unknown }; rpcUrls?: unknown; blockExplorerUrls?: unknown } | undefined;
   let chainId: number;
   try { chainId = Number(BigInt(String(first?.chainId))); } catch { return local(args); } // the provider answers the bad input
-  if (!networks.some(n => n.chainId === chainId)) return local(args); // and an unknown network (4902)
+  if (args.method === "wallet_addEthereumChain") {
+    // Adding (EIP-3085): the wallet decides (a known network is just a switch; a new one asks the user), then the page learns it.
+    await pageTransport.request("evm.addChain", first);
+    const urls = Array.isArray(first?.rpcUrls) ? first.rpcUrls.filter((u): u is string => typeof u === "string") : [];
+    learn({ chainId, name: String(first?.chainName ?? ""), nativeSymbol: String(first?.nativeCurrency?.symbol ?? ""), rpcUrls: urls, explorerUrl: Array.isArray(first?.blockExplorerUrls) ? first.blockExplorerUrls.find((u): u is string => typeof u === "string") : undefined });
+    return chainId === ethereum.network.chainId ? null : switchHere(chainId);
+  }
+  if (!networks.some(n => n.chainId === chainId)) return local(args); // an unknown network (4902): the site may add it first
   if (chainId === ethereum.network.chainId) return null;
   await pageTransport.request("evm.switchChain", { chainId });
   return switchHere(chainId);

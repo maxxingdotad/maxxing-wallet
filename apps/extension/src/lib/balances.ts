@@ -6,6 +6,7 @@
 import { knownTokens, KNOWN_SOLANA_MINTS } from "@maxxing/wallet-core/chains";
 import { chainMark, networks, type Network } from "./chains";
 import { rpc } from "./rpc";
+import { nativeAsset } from "./assets";
 import type { Holding } from "../ui/parts";
 
 export const API_URL = "https://api.maxxing.ad";
@@ -24,7 +25,7 @@ const format = (raw: bigint, decimals: number) => {
 async function evmBalances(network: Network, owner: string): Promise<Raw[]> {
   const out: Raw[] = [];
   const native = BigInt(await rpc<string>(network.rpc, "eth_getBalance", [owner, "latest"]));
-  out.push({ network, symbol: network.nativeSymbol, name: network.nativeSymbol === "ETH" ? "Ether" : network.nativeSymbol, decimals: 18, raw: native, address: null });
+  out.push({ network, symbol: network.nativeSymbol, name: nativeAsset(network).name, decimals: 18, raw: native, address: null });
   const tokens = knownTokens(network.networkId).slice(0, 12);
   const reads = await Promise.allSettled(tokens.map(token => rpc<string>(network.rpc, "eth_call", [{ to: token.address, data: `0x70a08231${owner.slice(2).toLowerCase().padStart(64, "0")}` }, "latest"])));
   reads.forEach((read, i) => {
@@ -84,8 +85,8 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
   if (fromApiEvm && fromApiSol) {
     raws = [...fromApiEvm, ...fromApiSol];
     source = "api";
-    // The Data API covers mainnets; test networks are read from the chain.
-    for (const network of all.filter(n => n.testnet)) {
+    // The Data API covers MAXXING's mainnets; test networks and networks the user added are read from their own chain.
+    for (const network of all.filter(n => n.testnet || n.custom)) {
       try { raws.push(...await (network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm))); } catch { errors.push(network.name); }
     }
   } else {
@@ -95,11 +96,13 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
   // What's held. Home adds each network's default assets at 0 itself (lib/assets.ts), so nothing is listed here at 0.
   const holdings: Holding[] = raws.filter(r => r.raw > 0n).map(r => {
     const amount = Number(r.raw) / 10 ** r.decimals;
-    const usd = r.usd ?? (STABLE.test(r.symbol) ? amount : null);
+    // A network the user added gets no dollar value from its coin's name and no real logo: "USDC" there is whatever it says.
+    const custom = !!r.network.custom;
+    const usd = r.usd ?? (STABLE.test(r.symbol) && !custom ? amount : null);
     return {
       symbol: r.symbol, name: r.name, chain: chainMark(r.network), amount: format(r.raw, r.decimals), usd: usd ?? 0, change: 0,
       // Only the extension's own logos: a remote image would tell its host when the wallet is open (the CSP allows none).
-      logo: r.symbol === "ETH" ? "/brand/eth-symbol.webp" : r.symbol === "SOL" ? "/brand/sol-symbol.webp" : undefined,
+      logo: custom ? undefined : r.symbol === "ETH" ? "/brand/eth-symbol.webp" : r.symbol === "SOL" ? "/brand/sol-symbol.webp" : undefined,
       color: STABLE.test(r.symbol) ? "#3E73C4" : undefined, priced: usd !== null, raw: r.raw.toString(), decimals: r.decimals, address: r.address, networkId: r.network.networkId,
     } as Holding;
   }).sort((a, b) => b.usd - a.usd || Number(b.raw ?? 0) - Number(a.raw ?? 0));

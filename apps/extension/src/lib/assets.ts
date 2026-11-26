@@ -25,7 +25,9 @@ function registryTokens(network: Network): AssetRef[] {
 }
 export const nativeAsset = (network: Network): AssetRef => ({
   networkId: network.networkId, address: null, symbol: network.nativeSymbol,
-  name: network.family === "SOLANA" ? "Solana" : network.nativeSymbol === "ETH" ? "Ether" : network.nativeSymbol, decimals: network.family === "SOLANA" ? 9 : 18,
+  // A user-added network's coin carries its network's name ("ETH on Local Test"), so it never reads as the real Ether.
+  name: network.custom ? `${network.nativeSymbol} on ${network.name}` : network.family === "SOLANA" ? "Solana" : network.nativeSymbol === "ETH" ? "Ether" : network.nativeSymbol,
+  decimals: network.family === "SOLANA" ? 9 : 18,
 });
 
 /** Native coin plus the registry's dollar stables, per network (deduplicated: the registry may name a mint twice). */
@@ -43,7 +45,8 @@ export function defaultAssets(networks: readonly Network[]): AssetRef[] {
 /** Every asset the registry names on these networks: these get the verified badge. */
 export function verifiedAssets(networks: readonly Network[]): Set<AssetKey> {
   const out = new Set<AssetKey>();
-  for (const n of networks) { out.add(assetKey(n.networkId, null)); for (const t of registryTokens(n)) out.add(assetKey(n.networkId, t.address)); }
+  // A network the user added is never verified: its coin and anything on it are only as good as the endpoint they chose.
+  for (const n of networks) { if (n.custom) continue; out.add(assetKey(n.networkId, null)); for (const t of registryTokens(n)) out.add(assetKey(n.networkId, t.address)); }
   return out;
 }
 
@@ -73,7 +76,7 @@ export function listAssets<T extends { networkId?: string; address?: string | nu
   const ids = new Set(networks.map(n => n.networkId));
   const verified = verifiedAssets(networks);
   const out = new Map<AssetKey, ListedAsset<T>>();
-  for (const ref of defaultAssets(networks)) out.set(assetKey(ref.networkId, ref.address), { key: assetKey(ref.networkId, ref.address), ref, trust: "verified", held: null, custom: false });
+  for (const ref of defaultAssets(networks)) out.set(assetKey(ref.networkId, ref.address), { key: assetKey(ref.networkId, ref.address), ref, trust: verified.has(assetKey(ref.networkId, ref.address)) ? "verified" : "unverified", held: null, custom: false });
   for (const ref of prefs.custom) if (ids.has(ref.networkId)) out.set(assetKey(ref.networkId, ref.address), { key: assetKey(ref.networkId, ref.address), ref, trust: trustOf(ref, verified), held: null, custom: true });
   for (const h of held) {
     if (!h.networkId || !ids.has(h.networkId)) continue;

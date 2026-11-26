@@ -445,7 +445,9 @@ export const SDK_CHAINS: SdkChain[] = [
     "testnet": false,
     "explorerUrl": "https://elysium.kinetiq.xyz/explorer",
     "rpcUrls": [
-      "https://rpc.elysium.kinetiq.xyz"
+      "https://rpc.elysium.kinetiq.xyz",
+      "https://elysium.drpc.org",
+      "https://elysium-rpc.publicnode.com"
     ]
   },
   {
@@ -685,7 +687,8 @@ export const SDK_CHAINS: SdkChain[] = [
     "testnet": false,
     "rpcUrls": [
       "https://rpc.zora.energy",
-      "https://zora.drpc.org"
+      "https://zora.drpc.org",
+      "https://7777777.rpc.thirdweb.com"
     ],
     "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
@@ -698,7 +701,9 @@ export const SDK_CHAINS: SdkChain[] = [
     "explorerUrl": "https://explorer.solana.com",
     "rpcUrls": [
       "https://api.mainnet-beta.solana.com",
-      "https://solana-rpc.publicnode.com"
+      "https://solana-rpc.publicnode.com",
+      "https://api.mainnet.solana.com",
+      "https://solana.api.pocket.network"
     ],
     "popularRank": 3
   },

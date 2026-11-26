@@ -10,7 +10,6 @@ import { signSolanaTransaction } from "@maxxing/wallet-core/solana-tx";
 import { networkById, type Network } from "./chains";
 import { rpc, sendSigned } from "./rpc";
 import { activity, kept } from "./store";
-import { browserRpcUrls } from "@maxxing/wallet-sdk";
 
 export function parseUnits(text: string, decimals: number): bigint {
   const clean = text.trim().replace(/,/g, "");
@@ -117,7 +116,8 @@ export const maxFeeOf = (tx: { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: b
 
 // ── EVM ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 /** `to`: the recipient of a send (kept in Recent), or for a wallet-made call (a revoke) the contract, which isn't. */
-export type EvmDraft = { network: Network; transaction: ReturnType<typeof checkedTransaction>; summary: TransactionSummary; to: string; from: string; kind: "send" | "call" };
+/** `feeCapped`: on a network the user added, the tip was capped (see CUSTOM_MAX_TIP); the review says so. */
+export type EvmDraft = { network: Network; transaction: ReturnType<typeof checkedTransaction>; summary: TransactionSummary; to: string; from: string; kind: "send" | "call"; feeCapped?: boolean };
 
 export async function draftEvmSend(input: { network: Network; from: string; to: string; amount: string; token: { address: string; decimals: number } | null }): Promise<EvmDraft> {
   if (!isAddress(input.to.trim())) throw new Error("That isn't an EVM address.");
@@ -143,14 +143,22 @@ export async function draftEvmCall(input: { network: Network; from: string; call
   const chainId = network.evmChainId!;
   const fees = block?.baseFeePerGas
     ? await (async () => {
-      const priority = await rpc<string>(network.rpc, "eth_maxPriorityFeePerGas", []).then(BigInt).catch(() => 1_000_000n);
+      const reported = await rpc<string>(network.rpc, "eth_maxPriorityFeePerGas", []).then(BigInt).catch(() => 1_000_000n);
+      const priority = network.custom && reported > CUSTOM_MAX_TIP ? CUSTOM_MAX_TIP : reported;
       const max = BigInt(block.baseFeePerGas!) * 2n + priority;
       return { type: "eip1559" as const, maxFeePerGas: max, maxPriorityFeePerGas: priority > max ? max : priority };
     })()
     : { type: "legacy" as const, gasPrice: BigInt(await rpc<string>(network.rpc, "eth_gasPrice", [])) };
+  if (network.custom && (("maxFeePerGas" in fees ? fees.maxFeePerGas : fees.gasPrice) > CUSTOM_MAX_FEE))
+    throw new Error(`This network's endpoint asks a fee above ${formatUnits(CUSTOM_MAX_FEE, 9)} gwei, more than a network you added may charge. Nothing was signed.`);
   const transaction = checkedTransaction({ chainId, nonce, gas, value: call.value, to: call.to, ...(call.data ? { data: call.data } : {}), ...fees });
-  return { network, transaction, summary: transactionSummary(transaction), to: call.to, from, kind: "call" };
+  return { network, transaction, summary: transactionSummary(transaction), to: call.to, from, kind: "call", ...(network.custom ? { feeCapped: true } : {}) };
 }
+/**
+ * A network the user added reports its own fees, and a bad endpoint could inflate them: its tip is capped at 2 gwei, and a maximum
+ * fee above 500 gwei per gas is refused (registry networks use what the chain reports).
+ */
+export const CUSTOM_MAX_TIP = 2_000_000_000n, CUSTOM_MAX_FEE = 500_000_000_000n;
 
 /** What a send returns: its id, and whether a node is known to have taken it (false: not confirmed yet, see sendStatus). */
 export type Sent = { id: string; certain: boolean };
@@ -234,4 +242,4 @@ export async function sendSol(draft: SolDraft, from: string): Promise<Sent> {
   return { id: signature, certain };
 }
 
-export const rpcFor = (networkId: string) => { const chain = networkById(networkId); return chain ? browserRpcUrls(chain) : []; };
+export const rpcFor = (networkId: string) => networkById(networkId)?.rpc ?? [];

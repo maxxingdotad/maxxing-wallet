@@ -3,7 +3,8 @@ import { AlertTriangle, BadgeCheck, Check, ChevronDown, Eye, EyeOff, Plus, Slide
 import { ChainLogo, TokenLogo } from "../ui/logos";
 import { usd, type Holding } from "../ui/parts";
 import { Busy, PageHead, message, useEscape } from "./kit";
-import { networks, type Network } from "../lib/chains";
+import { networkLabel, networks, type Network } from "../lib/chains";
+import { CustomTag } from "./Networks";
 import { assetKey, listAssets, spamCount, verifiedAssets, trustOf, type AssetPrefs, type AssetRef, type ListedAsset } from "../lib/assets";
 import { assetPrefs } from "../lib/store";
 import { rpc } from "../lib/rpc";
@@ -11,9 +12,9 @@ import { rpc } from "../lib/rpc";
 /** The header's network button: "All networks" or the chosen chain, with its logo. */
 export function NetworkButton({ selected, onOpen }: { selected: string; onOpen: () => void }) {
   const chosen = selected === "all" ? null : networks(true).find(n => n.networkId === selected) ?? null;
-  return <button type="button" className="chip network-chip" onClick={onOpen} aria-haspopup="dialog" aria-label={`Network: ${chosen?.name ?? "All networks"}. Change`}>
+  return <button type="button" className="chip network-chip" onClick={onOpen} aria-haspopup="dialog" aria-label={`Network: ${chosen ? networkLabel(chosen) : "All networks"}. Change`}>
     {chosen ? <ChainLogo networkId={chosen.networkId} name={chosen.name} size={16} /> : <span className="dot" style={{ background: "conic-gradient(#A36AFF, #3FD5F5, #E8E4DC, #A36AFF)" }} />}
-    <span>{chosen?.name ?? "All"}</span><ChevronDown size={14} />
+    <span>{chosen?.name ?? "All"}</span>{chosen?.custom && <span className="tag warn" title={networkLabel(chosen)}>added</span>}<ChevronDown size={14} />
   </button>;
 }
 
@@ -38,7 +39,7 @@ export function NetworkSheet({ selected, showTestnets, onPick, onClose }: { sele
           </button>}
           {shown.map(n => <button type="button" key={n.networkId} className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => onPick(n.networkId)}>
             <ChainLogo networkId={n.networkId} name={n.name} size={24} />
-            <div className="main"><b>{n.name}</b><small>{n.testnet ? "Test network" : n.nativeSymbol}</small></div>
+            <div className="main"><b>{n.name}{n.custom && <> <CustomTag network={n} /></>}</b><small>{n.testnet ? "Test network" : n.nativeSymbol}</small></div>
             {selected === n.networkId && <Check size={16} />}
           </button>)}
         </div>
@@ -74,7 +75,7 @@ export function AssetList({ shown, holdings, prefs, hideBalances, pending, onOpe
       const h = a.held ?? asHolding(a, n);
       return <button type="button" key={a.key} className="row asset-row" data-trust={a.trust} style={{ width: "100%", textAlign: "left" }} onClick={() => onOpen(h)}>
         <span className="token-stack"><TokenLogo symbol={a.ref.symbol} size={36} verified={a.trust === "verified"} />{n && <span className="badge-logo"><ChainLogo networkId={n.networkId} name={n.name} size={15} /></span>}</span>
-        <div className="main"><b>{a.ref.name} <TrustMark trust={a.trust} /></b><small className="num">{hideBalances ? "••••" : pending && !a.held ? a.ref.symbol : `${a.held?.amount ?? "0"} ${a.ref.symbol}`} · {n?.name}</small></div>
+        <div className="main"><b>{a.ref.name} <TrustMark trust={a.trust} /></b><small className="num">{hideBalances ? "••••" : pending && !a.held ? a.ref.symbol : `${a.held?.amount ?? "0"} ${a.ref.symbol}`} · {n && networkLabel(n)}</small></div>
         <div className="end">{pending && !a.held && !hideBalances ? <span className="sk sk-line" style={{ width: 56, height: 14 }} aria-label="Reading balance" /> : <b className="num">{hideBalances ? "••••" : a.held ? (a.held.priced === false ? "—" : usd(a.held.usd)) : "$0.00"}</b>}{a.held?.priced === false && <small>no price yet</small>}</div>
       </button>;
     })}</div>

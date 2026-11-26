@@ -137,6 +137,58 @@ test("switching networks: free while not connected; a connected site keeps its n
   assert.throws(() => wallet.review("evm.switchChain" as never, { chainId: 1 }, SITE), /signs nothing/);
 });
 
+test("wallet_addEthereumChain: a registry network only with its own endpoints, a new one asks and is checked, then the page learns it", async () => {
+  // Its own connected site (the main test site has used up its declines for the minute), on Ethereum.
+  const CHAINS = "https://chains.example", at = (tab: number) => sender(tab, CHAINS);
+  await store.sites.grant(CHAINS, wallet.snapshot().public!);
+  await store.sites.setChain(CHAINS, 1);
+  const add = (params: object) => request("evm.addChain", params);
+  const base = { chainName: "Base", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 } };
+  // A network the wallet has is a switch with the usual rules, whatever endpoints the site names: they're ignored, never kept.
+  assert.deepEqual(await ask(add({ ...base, chainId: "0x2105", rpcUrls: ["https://evil-rpc.example"] }), at(80)), { done: false });
+  const switching = await pendingOf(80);
+  assert.equal(switching.kind, "switch");
+  assert.equal(approval.switchTarget(switching)?.evmChainId, 8453);
+  await approval.decline(switching);
+  assert.deepEqual((await store.kept.get<{ rpcs: object }>("user-networks", { rpcs: {} })).rpcs, {}, "the site's endpoint isn't kept");
+  // A request that isn't a valid network is refused without a window.
+  const windows = windowsCreated.length;
+  assert.equal((await ask(add({ chainId: "0x7a69", chainName: "Local", nativeCurrency: { symbol: "ETH", decimals: 6 }, rpcUrls: ["https://rpc.local.example"] }), at(80))).error.code, -32602);
+  assert.equal(windowsCreated.length, windows);
+  // A new network: the user is asked; approving checks the endpoint's chain id before anything is kept.
+  const local = { chainId: "0x7a69", chainName: "Local Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://rpc.local.example"] };
+  assert.deepEqual(await ask(add(local), at(80)), { done: false });
+  const asked = await pendingOf(80);
+  assert.equal(asked.kind, "add-network");
+  assert.deepEqual(approval.addNetworkRequest(asked), { chainId: 31337, name: "Local Chain", symbol: "ETH", rpcUrls: ["https://rpc.local.example"] });
+  const real = globalThis.fetch;
+  let chainAnswer = "0x1";
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => String(input) === "https://rpc.local.example"
+    ? new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: chainAnswer }))
+    : real(input, init)) as typeof fetch;
+  try {
+    await assert.rejects(approval.approveAddNetwork(asked), /serves chain 1, not 31337/, "an endpoint for another chain is refused");
+    assert.equal((await store.kept.get<{ custom: unknown[] }>("user-networks", { custom: [] })).custom.length, 0, "nothing kept");
+    chainAnswer = "0x7a69";
+    await approval.approveAddNetwork(asked);
+  } finally { globalThis.fetch = real; }
+  assert.equal((tabSends.at(-1)!.message as any).ok, true);
+  const saved = (await store.kept.get<{ custom: { evmChainId: number; source: string; origin: string }[] }>("user-networks", { custom: [] })).custom;
+  assert.deepEqual(saved.map(c => [c.evmChainId, c.source, c.origin]), [[31337, "site", CHAINS]]);
+  assert.equal((await store.sites.get(CHAINS))!.chainId, 31337, "the site moves to it");
+  // The page learns the network again on its next visit, with the site's own endpoint only; another site doesn't get it.
+  const status = await new Promise<any>(r => backgroundListener({ type: "site-status" }, at(80), r));
+  assert.deepEqual(status.networks, [{ chainId: 31337, name: "Local Chain", nativeSymbol: "ETH", rpcUrls: ["https://rpc.local.example"] }]);
+  assert.equal((await new Promise<any>(r => backgroundListener({ type: "site-status" }, sender(7), r)))?.networks, undefined);
+  // Asking to add it again is a switch, not a second network.
+  await store.sites.setChain(CHAINS, 1);
+  assert.deepEqual(await ask(add(local), at(80)), { done: false });
+  assert.equal((await pendingOf(80)).kind, "switch");
+  await approval.decline(await pendingOf(80));
+  await store.sites.revoke(CHAINS);
+  await store.kept.set("user-networks", { rpcs: {}, preferred: {}, custom: [] });
+});
+
 test("known scams: one block screen per tab, a few a minute, one Activity entry, and no addresses even if connected before", async () => {
   const before = windowsCreated.length;
   assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.message, "MAXXING blocked this site: it's on the phishing blocklist.");

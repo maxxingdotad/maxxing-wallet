@@ -248,6 +248,205 @@ test("activity: per account and network, filters, statuses (also read from older
   assert.equal(statusOf(items[3]!), null);
 });
 
+test("custom RPCs: https only (http for this computer), chain id must match, the user's first, then the defaults; reset; custom networks never verified", async () => {
+  const un = await import("../src/lib/user-networks");
+  const { userNetworksNow, setUserNetworksNow, EMPTY } = await import("../src/lib/user-networks-state");
+  const { networks, networkById, evmNetwork, registryHasChain } = await import("../src/lib/chains");
+  const { verifiedAssets, listAssets, NO_PREFS, assetKey } = await import("../src/lib/assets");
+  const { rpc, RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  await store.kept.set("user-networks", EMPTY); setUserNetworksNow(EMPTY);
+  // Addresses: https, or http only on this computer; no user:password in them.
+  assert.equal(un.rpcUrlProblem("https://base.example/rpc/KEY"), null);
+  assert.equal(un.rpcUrlProblem("http://localhost:8545"), null);
+  assert.equal(un.rpcUrlProblem("http://127.0.0.1:8545"), null);
+  assert.match(un.rpcUrlProblem("http://node.example")!, /https/);
+  assert.match(un.rpcUrlProblem("wss://node.example")!, /https/);
+  assert.match(un.rpcUrlProblem("https://user:pass@node.example")!, /user name/);
+  assert.equal(un.rpcHost("https://base.example/v2/SECRETKEY?x=1"), "base.example", "shown and logged by host only");
+  // The endpoint is asked for its chain id: another chain's endpoint is refused and nothing is kept.
+  const answers: Record<string, string> = { "https://mine.example/base": "0x2105", "https://wrong.example/rpc": "0x1", "https://down.example/rpc": "" };
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input); calls.push(url);
+    const { method } = JSON.parse(String(init?.body));
+    if (url === "https://down.example/rpc" || url === "https://mine-down.example/base") return new Response("", { status: 503 });
+    if (method === "eth_chainId") return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: answers[url] ?? "0x2105" }));
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: url.includes("mine") ? "0xaaaa" : "0xbbbb" }));
+  }) as typeof fetch;
+  try {
+    const base = networkById("eip155:8453")!;
+    await assert.rejects(un.addRpc(base, "https://wrong.example/rpc"), /serves chain 1, not 8453/);
+    await assert.rejects(un.addRpc(base, "https://down.example/rpc"), /didn't answer/);
+    assert.deepEqual(userNetworksNow().rpcs, {}, "nothing kept after a refusal");
+    await un.addRpc(base, "https://mine.example/base");
+    const after = networkById("eip155:8453")!;
+    assert.equal(after.rpc[0], "https://mine.example/base", "the user's endpoint is tried first");
+    assert.deepEqual(after.rpc.slice(1), after.defaults, "then the registry's defaults");
+    calls.length = 0;
+    assert.equal(await rpc<string>(after.rpc, "eth_blockNumber"), "0xaaaa");
+    assert.equal(calls[0], "https://mine.example/base");
+    // When the user's endpoint is down, the defaults answer.
+    await un.addRpc(base, "https://mine-down.example/base").catch(() => {}); // refused at add time (down), so simulate one that went down later:
+    setUserNetworksNow({ ...userNetworksNow(), rpcs: { "eip155:8453": ["https://mine-down.example/base"] } });
+    calls.length = 0;
+    assert.equal(await rpc<string>(networkById("eip155:8453")!.rpc, "eth_getBalance"), "0xbbbb", "fell back to a default");
+    const firstOther = calls.findIndex(c => c !== "https://mine-down.example/base");
+    assert.ok(firstOther > 0, "the user's endpoint was tried first (its session check, then the call)");
+    assert.equal(calls[firstOther], networkById("eip155:8453")!.defaults[0], "then the first default");
+    // A preferred endpoint goes first; reset drops the user's own and their choice.
+    await un.loadUserNetworks();
+    await un.preferRpc("eip155:8453", base.defaults[2]!);
+    assert.equal(networkById("eip155:8453")!.rpc[0], base.defaults[2]);
+    await un.resetRpcs("eip155:8453");
+    assert.deepEqual(networkById("eip155:8453")!.rpc, base.defaults);
+    // A network the user adds: chain id checked, never one the registry has, marked custom, its coin never verified.
+    await assert.rejects(un.addCustomNetwork({ name: "Base again", rpcUrl: "https://mine.example/base", chainId: 8453, symbol: "ETH", registryHas: registryHasChain }), /already has this network/);
+    answers["https://new.example/rpc"] = "0x7a69";
+    await assert.rejects(un.addCustomNetwork({ name: "Mine", rpcUrl: "https://new.example/rpc", chainId: 999_000, symbol: "MINE", registryHas: registryHasChain }), /serves chain 31337/);
+    await un.addCustomNetwork({ name: "Local Chain", rpcUrl: "https://new.example/rpc", chainId: 31337, symbol: "tEth", explorerUrl: "https://scan.example", registryHas: registryHasChain });
+    const custom = evmNetwork(31337)!;
+    assert.equal(custom.custom, "user");
+    assert.equal(custom.nativeSymbol, "TETH");
+    assert.ok(networks(false).some(n => n.networkId === "eip155:31337"), "listed with the others");
+    assert.ok(verifiedAssets(networks(false)).has(assetKey("eip155:8453", null)), "a registry coin is verified (the check is real)");
+    assert.ok(!verifiedAssets(networks(false)).has(assetKey("eip155:31337", null)), "a custom network's coin never is");
+    const listed = listAssets(networks(false), [], NO_PREFS).find(a => a.ref.networkId === "eip155:31337")!;
+    assert.equal(listed.trust, "unverified");
+    await un.removeCustomNetwork("eip155:31337");
+    assert.equal(evmNetwork(31337), null);
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); setUserNetworksNow(EMPTY); await store.kept.set("user-networks", EMPTY); }
+});
+
+test("swap fee: from admin's public config, capped at 2%; off or without a recipient, none; a quote charging more is refused", async () => {
+  const { feeFromConfig, checkAppFee, feePercent, swapFee, forgetSwapFee, MAX_FEE_BPS } = await import("../src/lib/swap-fee");
+  const relay = await import("../src/lib/relay");
+  const { networks } = await import("../src/lib/chains");
+  const R = "0x9999999999999999999999999999999999999999";
+  const cfg = (o: Record<string, unknown>) => ({ "extension.swapFee.enabled": true, "extension.swapFee.percent": 0.85, "extension.swapFee.recipient": R, ...o });
+  assert.deepEqual(feeFromConfig(cfg({})), { bps: 85, recipient: R }, "applied");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.enabled": false })), null, "off");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.recipient": "" })), null, "no recipient: no fee");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.recipient": "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU" })), null, "a non-EVM recipient: no fee");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.percent": 0 })), null);
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.recipient": `0x${"0".repeat(40)}` })), null, "the zero address: no fee");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.recipient": "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAeD" })), null, "a failed checksum: no fee");
+  assert.equal(feeFromConfig(cfg({ "extension.swapFee.recipient": "0x5aaeb6053f3e94c9b9a09f33669435e7ef1beaed" }))?.recipient, "0x5aAeb6053F3E94C9b9A09f33669435E7Ef1BeAed", "lowercase: checksummed");
+  assert.deepEqual(feeFromConfig(cfg({ "extension.swapFee.percent": 5 })), { bps: MAX_FEE_BPS, recipient: R }, "a bad config is capped at 2%");
+  assert.equal(feeFromConfig(null), null, "no answer from the API: no fee");
+  assert.equal(feePercent(85), "0.85%"); assert.equal(feePercent(200), "2%"); assert.equal(feePercent(50), "0.5%");
+  // The quote's app fee against the fee shown (dollars, or the input token's own units).
+  const quoteWith = (appUsd: string | null, amount = "0", currency = "0x0") => ({ fees: { app: { amount, amountUsd: appUsd, currency: { address: currency } } }, details: { currencyIn: { amountUsd: "1000" } } });
+  const fee = { bps: 85, recipient: R }, input = { amountRaw: 10n ** 9n, currency: "0xUSDC" };
+  assert.equal(checkAppFee(quoteWith("8.5"), fee, input), 8.5);
+  assert.equal(checkAppFee(quoteWith("8.6"), fee, input), 8.6, "rounding is allowed");
+  assert.throws(() => checkAppFee(quoteWith("9.5"), fee, input), /more than the MAXXING fee shown/);
+  assert.throws(() => checkAppFee(quoteWith("1", "100"), null, input), /fee you weren't shown/);
+  assert.equal(checkAppFee(quoteWith(null, "0"), null, input), null, "no fee, none charged");
+  assert.equal(checkAppFee(quoteWith(null, "8500000", "0xusdc"), fee, input), null, "checked in the input token: 0.85% of 1,000");
+  assert.throws(() => checkAppFee(quoteWith(null, "9900000", "0xusdc"), fee, input), /more than the MAXXING fee/);
+  assert.throws(() => checkAppFee(quoteWith(null, "5", "0xother"), fee, input), /couldn't be checked/);
+  // Through quote(): the fee is asked of Relay as an app fee, and a quote charging more is refused before anything is prepared.
+  const base = networks(false).find(n => n.networkId === "eip155:8453")!;
+  const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+  const eth = { network: base, address: null, symbol: "ETH", decimals: 18 } as never, usdc = { network: base, address: USDC, symbol: "USDC", decimals: 6 } as never;
+  const user = "0x1111111111111111111111111111111111111111";
+  let sent: any = null, appUsd = "8.5";
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.endsWith("/v1/config")) return new Response(JSON.stringify({ values: cfg({}) }));
+    sent = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ steps: [], fees: { app: { amount: appUsd === "0" ? "0" : "1", amountUsd: appUsd, currency: { address: "0x0" } } },
+      details: { recipient: user, currencyIn: { amountUsd: "1000" }, currencyOut: { amountFormatted: "1000", currency: { chainId: 8453, address: USDC, decimals: 6 } } } }));
+  }) as typeof fetch;
+  try {
+    forgetSwapFee();
+    assert.deepEqual(await swapFee(), { bps: 85, recipient: R }, "read from the API's public config");
+    const q = await relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user });
+    assert.deepEqual(sent.appFees, [{ recipient: R, fee: "85" }]);
+    assert.deepEqual(q.maxxingFee, { bps: 85, usd: 8.5 });
+    appUsd = "12";
+    await assert.rejects(relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user }), /more than the MAXXING fee shown/);
+    appUsd = "0";
+    const none = await relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user, fee: null });
+    assert.equal(sent.appFees, undefined, "fee off: no app fee asked");
+    assert.equal(none.maxxingFee, null);
+    const capped = await relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user, fee: { bps: 900, recipient: R } }).catch(() => null);
+    assert.deepEqual(sent.appFees, [{ recipient: R, fee: "200" }], "never more than 2% asked, whatever is passed");
+    void capped;
+  } finally { globalThis.fetch = real; forgetSwapFee(); }
+});
+
+test("added networks can't pass for listed ones; a repointed RPC is dropped; fees capped; balances from their own chain, unpriced", async () => {
+  const un = await import("../src/lib/user-networks");
+  const { setUserNetworksNow, userNetworksNow, EMPTY } = await import("../src/lib/user-networks-state");
+  const { registryNameTaken, registryHasChain, networkById, evmNetwork, networkLabel } = await import("../src/lib/chains");
+  const { draftEvmCall } = await import("../src/lib/send");
+  const { loadPortfolio } = await import("../src/lib/balances");
+  const { chainIcon } = await import("../src/ui/logos");
+  const { rpc, RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  await store.kept.set("user-networks", EMPTY); setUserNetworksNow(EMPTY); un.forgetEndpointChecks();
+  // Names that read as a listed network are refused, whatever the case, spacing or added words.
+  for (const name of ["Ethereum", "ETHEREUM mainnet", "base", "Base Mainnet", "Arbitrum One", "B.A.S.E"]) assert.ok(registryNameTaken(name), name);
+  for (const name of ["Local Test", "My Rollup", "Basement"]) assert.equal(registryNameTaken(name), null, name);
+  const chainAnswer: Record<string, string> = { "https://own.example/base": "0x2105", "https://new.example/rpc": "0x7a69" };
+  let tip = "0xba43b7400", baseFee = "0x3b9aca00"; // a 50 gwei tip asked, a 1 gwei base fee
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input), { method } = JSON.parse(String(init?.body ?? "{}"));
+    calls.push(`${url} ${method}`);
+    const result = method === "eth_chainId" ? chainAnswer[url] ?? "0x2105" : method === "eth_getBalance" ? "0xde0b6b3a7640000" : method === "eth_maxPriorityFeePerGas" ? tip
+      : method === "eth_getBlockByNumber" ? { baseFeePerGas: baseFee } : method === "eth_getTransactionCount" ? "0x0" : method === "eth_estimateGas" ? "0x5208" : method === "eth_blockNumber" ? "0x1" : "0x";
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  try {
+    await assert.rejects(un.addCustomNetwork({ name: "Ethereum", rpcUrl: "https://new.example/rpc", chainId: 31337, symbol: "ETH", registryHas: registryHasChain }), /reads as Ethereum/);
+    await assert.rejects(un.addCustomNetwork({ name: "Еthereum", rpcUrl: "https://new.example/rpc", chainId: 31337, symbol: "ETH", registryHas: registryHasChain }), /plain letters/, "a Cyrillic look-alike");
+    await un.addCustomNetwork({ name: "Local Test", rpcUrl: "https://new.example/rpc", chainId: 31337, symbol: "USDC", registryHas: registryHasChain });
+    const local = evmNetwork(31337)!;
+    assert.equal(networkLabel(local), "Local Test (added by you)");
+    assert.equal(chainIcon(local.networkId), null, "no branded chain logo");
+    // Its tip is capped at 2 gwei and the review says so; a fee above 500 gwei is refused.
+    const draft = await draftEvmCall({ network: local, from: "0x1111111111111111111111111111111111111111", call: { to: "0x2222222222222222222222222222222222222222", value: 1n } });
+    assert.equal((draft.transaction as { maxPriorityFeePerGas: bigint }).maxPriorityFeePerGas, 2_000_000_000n);
+    assert.equal(draft.feeCapped, true);
+    const listed = await draftEvmCall({ network: networkById("eip155:8453")!, from: "0x1111111111111111111111111111111111111111", call: { to: "0x2222222222222222222222222222222222222222", value: 1n } });
+    assert.equal((listed.transaction as { maxPriorityFeePerGas: bigint }).maxPriorityFeePerGas, 50_000_000_000n, "a listed network uses what the chain reports");
+    baseFee = `0x${(400_000_000_000n).toString(16)}`; // 400 gwei: twice that is past the cap
+    await assert.rejects(draftEvmCall({ network: local, from: "0x1111111111111111111111111111111111111111", call: { to: "0x2222222222222222222222222222222222222222", value: 1n } }), /above 500 gwei/);
+    baseFee = "0x3b9aca00";
+    // Home reads it from its own chain; a coin named USDC there gets no dollar value and no real logo.
+    const p = await loadPortfolio({ evm: "0x1111111111111111111111111111111111111111", solana: "So11111111111111111111111111111111111111112" }, false, local.networkId);
+    const coin = p.holdings.find(h => h.networkId === local.networkId)!;
+    assert.equal(coin.name, "USDC on Local Test");
+    assert.equal(coin.priced, false, "never priced from its name");
+    assert.equal(coin.logo, undefined);
+    // A user's RPC that now serves another chain is dropped the first time it's used this session; the defaults take over.
+    await un.addRpc(networkById("eip155:8453")!, "https://own.example/base");
+    un.forgetEndpointChecks();
+    chainAnswer["https://own.example/base"] = "0x1";
+    calls.length = 0;
+    await rpc<string>(networkById("eip155:8453")!.rpc, "eth_blockNumber");
+    assert.ok(!calls.includes("https://own.example/base eth_blockNumber"), "never asked for data");
+    assert.deepEqual(userNetworksNow().rpcs["eip155:8453"] ?? [], [], "dropped");
+    assert.ok((await store.activity.all()).some(a => /now serves chain 1, not 8453; it was removed/.test(a.text) && !a.text.includes("/base")), "noted by host only");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); setUserNetworksNow(EMPTY); await store.kept.set("user-networks", EMPTY); un.forgetEndpointChecks(); }
+});
+
+test("wallet_addEthereumChain requests are read strictly", async () => {
+  const { parseAddChain } = await import("../src/lib/user-networks");
+  const ok = { chainId: "0x7a69", chainName: "Local Chain", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["http://evil.example", "https://rpc.local.example"], blockExplorerUrls: ["https://scan.example"] };
+  assert.deepEqual(parseAddChain([ok]), { chainId: 31337, name: "Local Chain", symbol: "ETH", rpcUrls: ["https://rpc.local.example"], explorerUrl: "https://scan.example" }, "only https endpoints are taken");
+  assert.equal(parseAddChain([{ ...ok, nativeCurrency: { symbol: "ETH", decimals: 6 } }]), null, "the coin must have 18 decimals");
+  assert.equal(parseAddChain([{ ...ok, rpcUrls: ["http://evil.example"] }]), null, "no https endpoint");
+  assert.equal(parseAddChain([{ ...ok, chainId: "nope" }]), null);
+  assert.equal(parseAddChain([{ ...ok, chainName: "" }]), null);
+});
+
 test("password guidance: the codes people guess first are refused with a reason; ordinary ones pass", async () => {
   const { weakPassword } = await import("../src/lib/password");
   // Digits only: 6 or more, no repeats, runs, patterns or the most used codes.
@@ -369,7 +568,7 @@ test("the approval window shows who a site is: the registrable domain from the f
 });
 const pick = (s: ReturnType<typeof siteName>) => ({ domain: s.domain, host: s.host, insecure: s.insecure });
 
-test("the pages may connect only to the registry's RPC origins and the named services", async () => {
+test("the pages connect over https (any endpoint, for the user's own RPCs), plain http only locally, scripts only their own", async () => {
   const { connectOrigins, extensionCsp, SERVICES } = await import("../src/lib/csp");
   const { API_URL } = await import("../src/lib/balances");
   const { RELAY_API } = await import("../src/lib/relay");
@@ -381,7 +580,9 @@ test("the pages may connect only to the registry's RPC origins and the named ser
   assert.ok(origins.length > 5);
   const csp = extensionCsp();
   assert.match(csp, /img-src 'self' data:;/);
-  assert.ok(!/connect-src[^;]*\bhttps:(\s|;|$)/.test(csp), "no blanket https:");
+  assert.match(csp, /script-src 'self';/, "scripts: the extension's own only");
+  assert.match(csp, /connect-src 'self' https: http:\/\/localhost:\* http:\/\/127\.0\.0\.1:\* http:\/\/\[::1\]:\*;/, "https anywhere (custom RPCs), http only on this computer");
+  assert.ok(!/connect-src[^;]*\bhttp:(\s|;|$)/.test(csp), "never plain http elsewhere");
   assert.ok(!/wss:/.test(csp));
 });
 

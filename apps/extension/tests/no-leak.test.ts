@@ -386,6 +386,8 @@ test("only reviewed files reach the network, other windows, the clipboard or the
     "src/lib/blocklist.ts": ["fetch"],                      // downloads the public phishing list: sends nothing
     "src/lib/psl.ts": ["fetch"],                            // downloads the Public Suffix List: sends nothing
     "src/lib/market.ts": ["fetch"],                         // token prices and charts: token addresses only, never the user's
+    "src/lib/swap-fee.ts": ["fetch"],                       // the public config (the swap fee): sends nothing
+    "src/lib/user-networks.ts": ["fetch"],                  // an endpoint the user added: eth_chainId and the latest block, nothing about the user
     "src/lib/lock.ts": ["sendMessage", "storage"],         // the open session in memory-only session storage; "check again" to tabs on lock
     "src/lib/relay.ts": ["fetch"],                          // Relay quotes, status and chain list: addresses, assets, amounts
     "src/lib/rpc.ts": ["fetch"],                            // public RPC: reads and signed transactions

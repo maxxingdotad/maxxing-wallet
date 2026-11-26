@@ -4,7 +4,7 @@ import { ChainLogo } from "../ui/logos";
 import { short } from "../ui/parts";
 import { PageHead } from "./kit";
 import { activity, settings as settingsStore, sites as siteStore, type SitePermission } from "../lib/store";
-import { evmNetwork, networks } from "../lib/chains";
+import { evmNetwork, networkLabel, networks } from "../lib/chains";
 import * as wallet from "../lib/wallet";
 
 /** Which account a site was connected with, by name, or its short address if it's in no wallet here. */
@@ -46,7 +46,7 @@ export function ConnectedSites({ snap, onBack, toast }: { snap: wallet.WalletSna
                 await refresh(); toast(`${host} is on ${next.name}`);
               }}>
                 {!s.chainId && <option value="">The site's choice</option>}
-                {evm.map(n => <option key={n.networkId} value={n.evmChainId}>{n.name}</option>)}
+                {evm.map(n => <option key={n.networkId} value={n.evmChainId}>{networkLabel(n)}</option>)}
               </select>
             </label>
           </div>;

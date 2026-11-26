@@ -13,6 +13,8 @@ import { ERRORS, LIMITS, type Pending } from "./lib/protocol";
 import { siteName, type SiteName } from "./lib/site";
 import { sites } from "./lib/store";
 import { ChainLogo } from "./ui/logos";
+import { decode } from "./lib/codec";
+import { evmNetwork, networkLabel } from "./lib/chains";
 
 /**
  * The approval window: one site request, shown in full before anything happens. It unlocks the wallet with the PIN if needed,
@@ -95,6 +97,36 @@ function Approve() {
   const site = <SiteCard name={name} known={known} />;
   const decline = () => close(() => approval.decline(pending));
 
+  // A site asks to add a network the wallet doesn't have. Nothing is signed; the endpoint is checked before it's kept.
+  if (pending.kind === "add-network") {
+    const asked = approval.addNetworkRequest(pending);
+    const host = (u: string) => { try { return new URL(u).host; } catch { return u; } };
+    return <div className="popup"><div className="backdrop" />
+      <div className="scroll" style={{ paddingTop: 12, paddingBottom: 130 }} data-testid="add-network-request">
+        {site}
+        <h1 className="ask-title" style={{ overflowWrap: "anywhere" }}>Add {asked?.name ?? "a network"}?</h1>
+        <div className="alert warn" style={{ marginBottom: 10 }}><AlertTriangle size={16} /><span><b>{name.domain} wants to add a network MAXXING doesn't list.</b> Its endpoint decides what you see there: balances, fees and what a transaction does. Only add it if you trust this site.</span></div>
+        {asked && <div className="card facts">
+          <div className="fact"><span>Network</span><b>{asked.name}</b></div>
+          <div className="fact"><span>Chain ID</span><b className="num">{asked.chainId}</b></div>
+          <div className="fact"><span>Coin</span><b>{asked.symbol}</b></div>
+          <div className="fact"><span>RPC</span><b style={{ overflowWrap: "anywhere" }}>{host(asked.rpcUrls[0]!)}</b></div>
+          {asked.explorerUrl && <div className="fact"><span>Explorer</span><b style={{ overflowWrap: "anywhere" }}>{host(asked.explorerUrl)}</b></div>}
+        </div>}
+        {known && asked && <p className="ask-sub" style={{ marginTop: 10, color: "var(--text)" }} data-testid="will-switch"><b>{name.domain} will switch to {asked.name}</b> once it's added.</p>}
+        <p className="ask-sub" style={{ marginTop: known ? 4 : 10 }}>It shows as added by this site, never verified. Gas-free and swaps work there only if Relay supports it.</p>
+        {error && <div className="alert danger" role="alert" style={{ marginTop: 8 }}>{error}</div>}
+      </div>
+      <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><div className="btn-row">
+        <button type="button" className="btn secondary" onClick={decline}>Cancel</button>
+        <button type="button" className="btn primary" disabled={busy || !armed || !asked} onClick={async () => {
+          setBusy(true); setError("");
+          try { await approval.approveAddNetwork(pending); window.close(); } catch (e) { setError(message(e)); setBusy(false); }
+        }}>{busy ? "Checking the endpoint…" : "Add network"}</button>
+      </div></div>
+    </div>;
+  }
+
   // A connected site asks to move to another network. Nothing is signed, so the wallet needn't be unlocked.
   if (pending.kind === "switch") {
     const target = approval.switchTarget(pending);
@@ -162,11 +194,15 @@ function Approve() {
   const { reviewed, refused } = signReview;
   const view = reviewed?.view ?? null;
   const method = pending.method;
+  // The network an EVM request is for (a transaction's chainId, or typed data's domain): a user-added one is called out.
+  const signChain = (() => { const p = decode(pending.params) as { transaction?: { chainId?: unknown }; typedData?: { domain?: { chainId?: unknown } } } | null; return Number(p?.transaction?.chainId ?? p?.typedData?.domain?.chainId); })();
+  const signNetwork = method.startsWith("evm.") && Number.isSafeInteger(signChain) ? evmNetwork(signChain) : null;
   return <div className="popup"><div className="backdrop" />
     <div className="scroll" style={{ paddingTop: 12, paddingBottom: 130 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}><div style={{ flex: 1, minWidth: 0 }}>{site}</div><SafetyScore value={refused ? 5 : score(view, known)} /></div>
       {refused ? <><h1 className="ask-title">This request can't be signed</h1><div className="alert danger"><AlertTriangle size={17} /><span>{message(new Error(refused))}</span></div></> : view && <>
         <h1 className="ask-title">{view.title}</h1>
+        {signNetwork?.custom && <div className="alert warn" style={{ marginBottom: 8 }} data-testid="custom-network-sign"><AlertTriangle size={17} /><span><b>On {networkLabel(signNetwork)}.</b> MAXXING doesn't list or check this network: its endpoint decides what this does. Only sign if you trust it.</span></div>}
         <p className="ask-sub">From {active.label} ({short(method.startsWith("evm.") ? open.evm : open.solana)})</p>
         {view.warnings.map((w, i) => <div key={i} className="alert danger" style={{ marginBottom: 8 }}><AlertTriangle size={17} /><span>{/no limit|unlimited/i.test(w) ? <><span className="unlimited">UNLIMITED</span> {w}</> : w}</span></div>)}
         {view.actions.map((a, i) => <p key={i} style={{ fontSize: 14, fontWeight: 600, margin: "4px 2px 8px" }}>{a}</p>)}

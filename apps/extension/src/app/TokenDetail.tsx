@@ -5,7 +5,7 @@ import { usd, type Holding } from "../ui/parts";
 import { PageHead } from "./kit";
 import { TrustMark } from "./Assets";
 import { chart, price, type Price, type Range } from "../lib/market";
-import { networks } from "../lib/chains";
+import { networkLabel, networks } from "../lib/chains";
 import { trustOf, verifiedAssets } from "../lib/assets";
 
 /** A price line: the range's closes, scaled to the box, with a soft fill. Flat or empty data draws a quiet empty state. */
@@ -65,7 +65,7 @@ export function TokenDetail({ holding, all, onBack, onSend, onReceive, onSwap }:
         const n = shownNets.find(x => x.networkId === h.networkId);
         return <div key={`${h.networkId}:${h.address ?? ""}`} className="row">
           {n && <ChainLogo networkId={n.networkId} name={n.name} size={26} />}
-          <div className="main"><b>{n?.name ?? h.chain.name}</b><small className="num">{h.amount} {h.symbol}</small></div>
+          <div className="main"><b>{n ? networkLabel(n) : h.chain.name}</b><small className="num">{h.amount} {h.symbol}</small></div>
           <div className="end"><b className="num">{h.priced === false ? "—" : usd(h.usd)}</b></div>
         </div>;
       })}</div>

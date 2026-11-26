@@ -7,7 +7,8 @@ import * as wallet from "./wallet";
 import { encode, decode } from "./codec";
 import { ERRORS, type Pending, type TabAnswer } from "./protocol";
 import { activity, declines, grantedTo, sites, trustedLookalikes } from "./store";
-import { evmNetwork } from "./chains";
+import { evmNetwork, registryHasChain } from "./chains";
+import { addCustomNetwork, parseAddChain } from "./user-networks";
 import { approvalsInPermit, approvalInTransaction, approvals } from "./approvals";
 
 export async function loadPending(id: string): Promise<Pending | null> {
@@ -75,6 +76,22 @@ export async function approveSwitch(pending: Pending) {
   if (!(await sites.get(pending.origin))) { await answer(pending, { ok: false, error: ERRORS.unauthorized }); return; }
   await sites.setChain(pending.origin, network.evmChainId);
   await activity.add({ kind: "connect", text: `Switched the site to ${network.name}`, site: pending.origin, networkId: network.networkId });
+  await answer(pending, { ok: true, result: null });
+}
+
+/** The network a site asks to add (EIP-3085), read strictly; null if the request isn't a valid one. */
+export const addNetworkRequest = (pending: Pending) => parseAddChain(decode(pending.params));
+
+/**
+ * Adds the network the site asked for, after the user approved: its first endpoint must answer with the chain id the site gave
+ * (checked now, in addCustomNetwork). It is kept as added by this site, never verified; a connected site is moved to it.
+ */
+export async function approveAddNetwork(pending: Pending) {
+  const asked = addNetworkRequest(pending);
+  if (!asked) { await answer(pending, { ok: false, error: ERRORS.badNetwork }); return; }
+  const network = await addCustomNetwork({ name: asked.name, rpcUrl: asked.rpcUrls[0]!, chainId: asked.chainId, symbol: asked.symbol, explorerUrl: asked.explorerUrl, source: "site", origin: pending.origin, registryHas: registryHasChain });
+  if (await sites.get(pending.origin)) await sites.setChain(pending.origin, asked.chainId);
+  await activity.add({ kind: "connect", text: `Added a network at the site's request: ${network.name} (chain ${network.evmChainId})`, site: pending.origin, networkId: network.networkId });
   await answer(pending, { ok: true, result: null });
 }
 
