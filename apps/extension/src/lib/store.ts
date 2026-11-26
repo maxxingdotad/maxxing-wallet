@@ -5,12 +5,24 @@
  * - Kept until the browser closes (the open account's addresses, the lock state, when the user last did something, pending site
  *   requests): chrome.storage.session, memory only, which the background limits to the extension's own pages (TRUSTED_CONTEXTS).
  */
-export type Connection = { evm: string; solana: string };
-export type SitePermission = { origin: string; evm: string; solana: string; connectedAt: number; lastUsedAt: number };
-export type Settings = { autoLockMinutes: number; showTestnets: boolean };
-export type Activity = { at: number; kind: "connect" | "sign" | "send" | "export" | "lock" | "unlock" | "revoke" | "blocked"; text: string; site?: string };
+import { NO_PREFS, type AssetPrefs } from "./assets";
 
-const DEFAULTS: Settings = { autoLockMinutes: 15, showTestnets: false };
+export type Connection = { evm: string; solana: string };
+/** `chainId`: the EVM network this site is on (each site keeps its own); unset until the site or the user picks one. */
+export type SitePermission = { origin: string; evm: string; solana: string; connectedAt: number; lastUsedAt: number; chainId?: number };
+/** `network`: "all", or one registry networkId; every screen follows it. */
+export type Settings = { autoLockMinutes: number; showTestnets: boolean; network: string; /** Totals and amounts show as dots. */ hideBalances: boolean };
+export type TxStatus = "pending" | "confirmed" | "failed" | "not-sent";
+/**
+ * One line of Activity. Transactions also carry the account that sent them, the network, the hash (for the explorer link) and a
+ * status; wallet-wide events (lock, unlock, reveal) carry none and show under every account. Older entries have only text.
+ */
+export type Activity = {
+  at: number; kind: "connect" | "sign" | "send" | "export" | "lock" | "unlock" | "revoke" | "blocked"; text: string; site?: string;
+  account?: string; networkId?: string; hash?: string; status?: TxStatus;
+};
+
+const DEFAULTS: Settings = { autoLockMinutes: 15, showTestnets: false, network: "all", hideBalances: false };
 export const AUTO_LOCK_CHOICES = [1, 5, 15, 30, 60, 240] as const;
 
 // ── Kept across restarts: IndexedDB of the extension origin ────────────────────────────────────────────────────────────────
@@ -69,9 +81,11 @@ export const sites = {
   get: async (origin: string) => (await kept.get<Record<string, SitePermission>>("sites", {}))[origin] ?? null,
   grant: (origin: string, connection: Connection) => kept.update<Record<string, SitePermission>>("sites", {}, all => {
     const now = Date.now();
-    return { ...all, [origin]: { origin, evm: connection.evm, solana: connection.solana, connectedAt: all[origin]?.connectedAt ?? now, lastUsedAt: now } };
+    const chainId = all[origin]?.chainId;
+    return { ...all, [origin]: { origin, evm: connection.evm, solana: connection.solana, connectedAt: all[origin]?.connectedAt ?? now, lastUsedAt: now, ...(chainId ? { chainId } : {}) } };
   }),
   touch: (origin: string) => kept.update<Record<string, SitePermission>>("sites", {}, all => all[origin] ? { ...all, [origin]: { ...all[origin]!, lastUsedAt: Date.now() } } : all),
+  setChain: (origin: string, chainId: number) => kept.update<Record<string, SitePermission>>("sites", {}, all => all[origin] ? { ...all, [origin]: { ...all[origin]!, chainId } } : all),
   revoke: async (origin: string) => {
     await kept.update<Record<string, SitePermission>>("sites", {}, all => { const next = { ...all }; delete next[origin]; return next; });
     await kept.update<string[]>("trusted-lookalikes", [], all => all.filter(o => o !== origin));
@@ -87,16 +101,22 @@ export const activity = {
   all: () => kept.get<Activity[]>("activity", []),
   add: (entry: Omit<Activity, "at">) => kept.update<Activity[]>("activity", [], all => [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),
   /** Rewrites the newest entry that mentions `ref` (a transaction's hash), when what happened to it becomes known. */
-  settle: (ref: string, rewrite: (text: string) => string) => kept.update<Activity[]>("activity", [], all => {
-    const i = all.findIndex(a => a.text.includes(ref));
+  settle: (ref: string, rewrite: (text: string) => string, status?: TxStatus) => kept.update<Activity[]>("activity", [], all => {
+    const i = all.findIndex(a => a.hash === ref || a.text.includes(ref));
     if (i < 0) return all;
     const next = [...all];
-    next[i] = { ...next[i]!, text: rewrite(next[i]!.text) };
+    next[i] = { ...next[i]!, text: rewrite(next[i]!.text), ...(status ? { status } : {}) };
     return next;
   }),
   /** Adds the entry unless the same kind of entry for the same site was added within `ms` (so a site can't flood the list). */
   addUnlessRecent: (entry: Omit<Activity, "at">, ms: number) => kept.update<Activity[]>("activity", [], all =>
     all.some(a => a.kind === entry.kind && a.site === entry.site && Date.now() - a.at < ms) ? all : [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),
+};
+
+/** Home's asset choices: hidden assets, spam shown or not, tokens added by address (lib/assets.ts). */
+export const assetPrefs = {
+  read: async (): Promise<AssetPrefs> => ({ ...NO_PREFS, ...(await kept.get<Partial<AssetPrefs>>("asset-prefs", {})) }),
+  update: (change: (p: AssetPrefs) => AssetPrefs) => kept.update<AssetPrefs>("asset-prefs", NO_PREFS, p => change({ ...NO_PREFS, ...p })),
 };
 
 /** Sites whose name reads as MAXXING that the user said they know, after the warning. Disconnecting a site forgets it too. */

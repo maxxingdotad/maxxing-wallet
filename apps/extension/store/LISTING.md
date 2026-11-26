@@ -14,7 +14,7 @@ Copy for the Chrome Web Store, Microsoft Edge Add-ons and Firefox Add-ons (AMO).
 ## Description
 
 MAXXING Wallet is a self-custody wallet for EVM chains and Solana. Your recovery phrase and keys are created and kept on your
-device, encrypted with your PIN. MAXXING never has them.
+device, encrypted with your password. MAXXING never has them.
 
 - One recovery phrase, many accounts, on Ethereum, Base, Arbitrum, BNB Chain, Solana and every other network in MAXXING's list.
 - One balance across every network.
@@ -24,8 +24,9 @@ device, encrypted with your PIN. MAXXING never has them.
   Unlimited token approvals and look-alike messages are called out.
 - Sites connect only when you say so, and only to the account you chose. A site connected with one account can't sign with another.
 - Known scam sites are blocked using a public phishing blocklist. Sites whose names read as MAXXING but aren't maxxing.ad get a warning.
-- The wallet locks itself after the time you pick, and when the browser starts. Only your PIN opens it again.
-- Showing your recovery phrase or private keys takes several steps, with warnings, a PIN, and press-and-hold to reveal. A copied
+- One password opens every wallet and account on the device. The wallet locks itself after the time you pick, and when the
+  browser starts. Only your password opens it again, and wrong tries wait longer each time.
+- Showing your recovery phrase or private keys takes several steps, with warnings, your password, and press-and-hold to reveal. A copied
   secret is cleared from the clipboard after 60 seconds if it's still there.
 - Works as a toolbar popup, in Chrome's side panel, or in a full tab.
 
@@ -50,7 +51,6 @@ connects ask for signatures, which the user approves or declines one by one.
 | `clipboardWrite` | Copies addresses, and a secret when the user asks. |
 | `offscreen` | A service worker has no clipboard; an offscreen document clears a copied secret after 60 seconds, after the popup has closed. |
 | `clipboardRead` (optional, asked the first time a secret is copied) | To clear the clipboard only if it still holds the secret, leaving anything copied since. |
-| Host `https://api.maxxing.ad/*` | Balances and prices for the user's addresses. |
 | Host `https://api.relay.link/*` | Swap and bridge quotes and status. |
 | Content scripts on `https://*/*` | Lets websites find the wallet (EIP-6963, Wallet Standard) and send it requests; the script carries messages only and reads nothing from the page. |
 | Remote code | None. All code ships in the package; the pages' Content-Security-Policy allows only the extension's own scripts. |
@@ -59,7 +59,7 @@ connects ask for signatures, which the user approves or declines one by one.
 
 - **Collected and sent off the device:** wallet addresses (public). Sent to the MAXXING API (balances, prices), Relay (swap and
   bridge quotes), and the networks' public RPC endpoints (balances, sending signed transactions).
-- **Never collected or sent:** the recovery phrase, private keys, the PIN, browsing history, page content, personal
+- **Never collected or sent:** the recovery phrase, private keys, the password, browsing history, page content, personal
   communications, location, health or financial information other than public addresses and the swaps the user asks for.
 - **Downloads that send nothing about the user:** a public phishing blocklist and the Public Suffix List, twice a day.
 - Not sold, not used for advertising or credit, not transferred except as needed for the features above.

@@ -10,6 +10,7 @@ import { keccak256, type TypedDataDefinition } from "viem";
 import { evmNetwork, type Network } from "./chains";
 import { rpc, RpcError, sendSigned } from "./rpc";
 import { activity } from "./store";
+import { approvalInTransaction, approvals } from "./approvals";
 import PINNED from "./relay-pinned.json";
 import { browserRpcUrls } from "@maxxing/wallet-sdk";
 
@@ -362,13 +363,17 @@ export async function execute(prepared: Prepared, onProgress: (text: string) => 
     // waits for its receipt instead of failing, and never builds the step again (that could make a second deposit).
     const { id: hash, certain } = await sendSigned(step.urls, "eth_sendRawTransaction", [raw], keccak256(raw));
     hashes.push(hash);
+    // A route's own token approval is noted too, so it shows (and can be revoked) on the Approvals screen.
+    const given = approvalInTransaction(prepared.chainId, step.transaction as { to?: string | null; data?: string | null });
+    if (given) await approvals.note({ ...given, origin: "Relay" });
     await waitForReceipt(step.urls, hash, certain ? 120_000 : 240_000).catch(async error => {
       if (!(error instanceof Error && /slow to confirm/.test(error.message))) throw error; // it landed and failed: say so
-      await activity.add({ kind: "send", text: `Swap step not confirmed yet: ${step.label} · ${hash}` });
+      await activity.add({ kind: "send", text: `Swap step not confirmed yet: ${step.label} · ${hash}`, account: prepared.from, networkId: `eip155:${prepared.chainId}`, hash, status: "pending" });
       throw new Error(`${step.label} isn't confirmed yet (${hash.slice(0, 10)}…). It may still land: check it on the explorer before trying again.`, { cause: error });
     });
   }
-  await activity.add({ kind: "send", text: prepared.gasless ? "Gasless swap sent through Relay (fee paid from the swap)" : `Swap/bridge sent through Relay (${hashes.length} transaction${hashes.length === 1 ? "" : "s"})` });
+  await activity.add({ kind: "send", text: prepared.gasless ? "Gasless swap sent through Relay (fee paid from the swap)" : `Swap/bridge sent through Relay (${hashes.length} transaction${hashes.length === 1 ? "" : "s"})`,
+    account: prepared.from, networkId: `eip155:${prepared.chainId}`, ...(hashes.length ? { hash: hashes.at(-1)!, status: "confirmed" as const } : {}) });
   return hashes;
 }
 

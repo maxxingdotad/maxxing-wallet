@@ -69,8 +69,14 @@ async function apiBalances(address: string, wanted: Network[]): Promise<Raw[] | 
   } catch { return null; }
 }
 
-export async function loadPortfolio(account: { evm: string; solana: string }, showTestnets: boolean): Promise<Portfolio> {
+/** The networks a screen shows: every enabled one ("all"), or just the one picked in the network selector. */
+export const shownNetworks = (showTestnets: boolean, selected = "all") => {
   const all = networks(showTestnets);
+  return selected === "all" ? all : all.filter(n => n.networkId === selected);
+};
+
+export async function loadPortfolio(account: { evm: string; solana: string }, showTestnets: boolean, selected = "all"): Promise<Portfolio> {
+  const all = shownNetworks(showTestnets, selected);
   const errors: string[] = [];
   let raws: Raw[] = [];
   let source: Portfolio["source"] = "chain";
@@ -86,7 +92,8 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
     const reads = await Promise.allSettled(all.map(network => network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm)));
     reads.forEach((read, i) => { if (read.status === "fulfilled") raws.push(...read.value); else errors.push(all[i]!.name); });
   }
-  const holdings: Holding[] = raws.filter(r => r.raw > 0n || (r.address === null && !r.network.testnet && ["eip155:1", "eip155:8453", "solana:mainnet"].includes(r.network.networkId))).map(r => {
+  // What's held. Home adds each network's default assets at 0 itself (lib/assets.ts), so nothing is listed here at 0.
+  const holdings: Holding[] = raws.filter(r => r.raw > 0n).map(r => {
     const amount = Number(r.raw) / 10 ** r.decimals;
     const usd = r.usd ?? (STABLE.test(r.symbol) ? amount : null);
     return {

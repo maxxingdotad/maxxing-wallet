@@ -34,7 +34,14 @@ type PasskeyWrap = Sealed & { credential: string; salt: string };
  * record written before accounts existed, and the wallet window, which never adds any, are unchanged.
  */
 type ExtraAccount = PublicRecord & { index: number; label: string; hidden?: boolean };
-type SavedAccount = PublicRecord & { id: string; label: string; backedUp: boolean; seal: Sealed; pin: PinWrap; passkey?: PasskeyWrap; extra?: ExtraAccount[]; selected?: number };
+/**
+ * `pin`: the data key wrapped by this wallet's own PIN (the web wallet, and wallets made before the keyring).
+ * `ring`: the data key wrapped by the keyring's master key (keyring mode: one password for every wallet). A record has one or the
+ * other; adoption into the keyring writes `ring` and removes `pin` only after checking the new wrap opens the same wallet.
+ */
+type SavedAccount = PublicRecord & { id: string; label: string; backedUp: boolean; seal: Sealed; pin?: PinWrap; ring?: Sealed; passkey?: PasskeyWrap; extra?: ExtraAccount[]; selected?: number };
+/** The keyring: one random master key, wrapped by the one password (PBKDF2, like a wallet PIN). */
+type Keyring = { version: 1; salt: string; iv: string; cipher: string; iterations: number };
 type Collection = { version: 3; activeId: string | null; accounts: SavedAccount[] };
 type Attempts = { failures: number; waitUntil: number };
 /** One account of a wallet: index 0 is the wallet's own. */
@@ -81,7 +88,9 @@ function read(): Collection {
   try {
     const c = JSON.parse(raw) as Collection;
     const ok = c.version === 3 && Array.isArray(c.accounts) && c.accounts.length <= MAX_WALLETS
-      && c.accounts.every(a => publicValid(a) && typeof a.id === "string" && typeof a.label === "string" && typeof a.backedUp === "boolean" && sealValid(a.seal) && pinValid(a.pin) && passkeyValid(a.passkey) && extraValid(a))
+      && c.accounts.every(a => publicValid(a) && typeof a.id === "string" && typeof a.label === "string" && typeof a.backedUp === "boolean" && sealValid(a.seal)
+        && (a.pin === undefined || pinValid(a.pin)) && (a.ring === undefined || sealValid(a.ring)) && (a.pin !== undefined || a.ring !== undefined)
+        && passkeyValid(a.passkey) && extraValid(a))
       && new Set(c.accounts.map(a => a.id)).size === c.accounts.length
       && (c.activeId === null || c.accounts.some(a => a.id === c.activeId));
     if (!ok) throw new Error();
@@ -98,7 +107,17 @@ async function mutate<T>(action: () => T | Promise<T>): Promise<T> {
   return navigator.locks.request("maxxing-wallet-registry-v3", action);
 }
 
+/**
+ * The secret as the vault uses it. The web wallet (keyring off): a 6-digit PIN. Keyring mode (the extension's one password): any
+ * 6–128 characters, letters allowed, in Unicode NFC so the same password typed on another keyboard matches. An older wallet's
+ * 6-digit PIN passes either way, so migration is unchanged. How strong a new password must be is the setting screen's rule.
+ */
 export function checkedPin(pin: string) {
+  if (keyringMode) {
+    const secret = typeof pin === "string" ? pin.normalize("NFC") : "";
+    if ([...secret].length < 6 || [...secret].length > 128) throw new Error("Enter your password.");
+    return secret;
+  }
   if (!/^\d{6}$/.test(pin)) throw new Error("Enter 6 digits.");
   return pin;
 }
@@ -139,7 +158,7 @@ function attempts(id: string): Attempts {
 }
 /** When the next PIN try is allowed for this wallet (0 when now). */
 export function pinWaitUntil(id?: string) {
-  try { const w = attempts(id ?? current().id).waitUntil; return w > Date.now() ? w : 0; } catch { return 0; }
+  try { const w = attempts(id ?? (keyringMode && readKeyring() ? KEYRING_ID : current().id)).waitUntil; return w > Date.now() ? w : 0; } catch { return 0; }
 }
 /** 30 seconds after the 5th wrong PIN, then twice as long each time, up to an hour. */
 export function waitAfter(failures: number) {
@@ -155,8 +174,165 @@ function formatWait(ms: number) {
   return s < 60 ? `${s} seconds` : `${Math.ceil(s / 60)} minute${Math.ceil(s / 60) === 1 ? "" : "s"}`;
 }
 
-/** Opens the data key with the PIN, counting wrong tries. */
+// ---- the keyring: one password for every wallet (opt-in; the extension uses it, the web wallet doesn't) ----------------------
+
+const KEYRING_KEY = "maxxing.wallet.keyring.v1", KEYRING_ID = "keyring", KEYRING_SESSION = "keyring";
+const keyringAad = text("MAXXING keyring v1");
+const ringAad = (id: string) => text(`MAXXING keyring v1 wallet:${id}`);
+let keyringMode = false;
+/** Turns keyring mode on for this page (call before the vault is used): one password unlocks every wallet. */
+export function useKeyring(on: boolean) { keyringMode = on; }
+export function keyringModeOn() { return keyringMode; }
+
+/**
+ * A stored keyring's iteration count: at least today's (a later version may raise it, and the stored value is what unlocks), and
+ * under a ceiling so a tampered record can't make unlocking hang.
+ */
+const KEYRING_MAX_ITERATIONS = 10_000_000;
+const keyringIterationsValid = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= PIN_ITERATIONS && (n as number) <= KEYRING_MAX_ITERATIONS;
+
+function readKeyring(): Keyring | null {
+  const raw = store().getItem(KEYRING_KEY);
+  if (!raw) return null;
+  const k = JSON.parse(raw) as Keyring;
+  if (k?.version !== 1 || typeof k.salt !== "string" || k.salt.length !== 24 || !sealValid(k) || !keyringIterationsValid(k.iterations)) throw new Error("WALLET_STORAGE_DAMAGED_RESTORE_BACKUP");
+  return k;
+}
+/** Whether this device has a keyring (one password for every wallet). */
+export function keyringExists() { try { return readKeyring() !== null; } catch { return true; } }
+/** Whether the keyring is open in this session (the password was entered and the extension isn't locked). */
+export async function keyringOpen() { const m = await readDeviceSession(KEYRING_SESSION); if (m) { m.fill(0); return true; } return false; }
+
+async function wrapMaster(master: Uint8Array, pin: string): Promise<Keyring> {
+  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await pbkdf2(checkedPin(pin), salt, PIN_ITERATIONS);
+  return { version: 1, salt: b64(salt), iv: b64(iv), iterations: PIN_ITERATIONS, cipher: b64(new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: keyringAad }, key, new Uint8Array(master)))) };
+}
+/** The master key from the password, counting wrong tries (one count for the whole keyring). */
+async function masterFromPin(pin: string) {
+  const k = readKeyring();
+  if (!k) throw new Error("NO_KEYRING");
+  assertMayTry(KEYRING_ID);
+  try {
+    const key = await pbkdf2(checkedPin(pin), unb64(k.salt), k.iterations);
+    const master = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(k.iv), additionalData: keyringAad }, key, unb64(k.cipher)));
+    store().removeItem(ATTEMPTS_PREFIX + KEYRING_ID);
+    return master;
+  } catch (error) {
+    if (error instanceof Error && error.message === "Enter 6 digits.") throw error;
+    throw countWrongTry(KEYRING_ID);
+  }
+}
+async function masterFromSession() { return readDeviceSession(KEYRING_SESSION); }
+async function wrapWithRing(dataKey: Uint8Array, master: Uint8Array, id: string): Promise<Sealed> {
+  const key = await crypto.subtle.importKey("raw", new Uint8Array(master), "AES-GCM", false, ["encrypt"]);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  return { iv: b64(iv), cipher: b64(new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: ringAad(id) }, key, new Uint8Array(dataKey)))) };
+}
+async function unwrapRing(a: SavedAccount, master: Uint8Array) {
+  if (!a.ring) throw new Error("WALLET_NEEDS_OLD_PIN");
+  const key = await crypto.subtle.importKey("raw", new Uint8Array(master), "AES-GCM", false, ["decrypt"]);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(a.ring.iv), additionalData: ringAad(a.id) }, key, unb64(a.ring.cipher)));
+}
+/** The data key from the open keyring session, or null (keyring closed, or this wallet not in the keyring yet). */
+async function dataKeyFromRingSession(a: SavedAccount) {
+  if (!a.ring) return null;
+  const master = await masterFromSession();
+  if (!master) return null;
+  try { return await unwrapRing(a, master); } catch { return null; } finally { master.fill(0); }
+}
+function countWrongTry(id: string) {
+  const failures = attempts(id).failures + 1, wait = waitAfter(failures);
+  store().setItem(ATTEMPTS_PREFIX + id, JSON.stringify({ failures, waitUntil: wait ? Date.now() + wait : 0 } satisfies Attempts));
+  return Object.assign(new Error(wait ? `Wrong PIN. Try again in ${formatWait(wait)}.` : "Wrong PIN."), { code: wait ? "PIN_WAIT" : "PIN_WRONG", waitUntil: wait ? Date.now() + wait : 0 });
+}
+
+/** The wallet's data key from its own PIN wrap, without counting a wrong try (used only to adopt wallets that share the password). */
+async function dataKeyFromOwnPinQuietly(a: SavedAccount, pin: string) {
+  if (!a.pin) return null;
+  try {
+    const key = await pbkdf2(checkedPin(pin), unb64(a.pin.salt), a.pin.iterations);
+    return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: unb64(a.pin.iv), additionalData: pinAad(a.id) }, key, unb64(a.pin.cipher)));
+  } catch { return null; }
+}
+
+/**
+ * Moves one wallet into the keyring, keeping every key: its data key (from its own PIN) is checked by deriving its saved
+ * addresses, wrapped by the master key, the new wrap is opened again and compared, and only then is the PIN wrap replaced. If any
+ * step fails, the record is left exactly as it was.
+ */
+async function adopt(a: SavedAccount, dataKey: Uint8Array, master: Uint8Array) {
+  const account = await accountFor(a, dataKey, 0); // throws if the key doesn't open this wallet's own addresses
+  dispose(account);
+  const ring = await wrapWithRing(dataKey, master, a.id);
+  const back = await unwrapRing({ ...a, ring }, master);
+  try { if (back.length !== dataKey.length || back.some((b, i) => b !== dataKey[i])) throw new Error("KEYRING_CHECK_FAILED"); } finally { back.fill(0); }
+  await mutate(() => {
+    const c = read(), x = c.accounts.find(y => y.id === a.id);
+    if (!x) throw new Error("WALLET_NOT_FOUND");
+    if (x.ring) return;
+    x.ring = ring; delete x.pin; persist(c);
+    store().removeItem(ATTEMPTS_PREFIX + a.id);
+  });
+}
+
+/** Wallets still behind their own PIN (made before the keyring); each asks for its old PIN once, then joins the keyring. */
+export function walletsNeedingOldPin(): { id: string; label: string; evm: string }[] {
+  if (!keyringMode) return [];
+  return read().accounts.filter(a => !a.ring).map(a => ({ id: a.id, label: a.label, evm: a.evm }));
+}
+/** Moves a wallet made before the keyring into it, after its old PIN (wrong tries count for that wallet). The keyring must be open. */
+export async function adoptPlatformWallet(id: string, oldPin: string) {
+  const a = byId(id);
+  if (a.ring) return;
+  const master = await masterFromSession();
+  if (!master) throw Object.assign(new Error("Enter your password first."), { code: "PIN_NEEDED" });
+  try {
+    const dataKey = await dataKeyFromPin(a, oldPin);
+    try { await adopt(a, dataKey, master); } finally { dataKey.fill(0); }
+  } finally { master.fill(0); }
+  emit();
+}
+/** Tries the password on every wallet still behind its own PIN, quietly (no wrong-try count): those that share it join the keyring. */
+async function adoptSharingPassword(pin: string, master: Uint8Array) {
+  for (const a of read().accounts.filter(x => !x.ring)) {
+    const dataKey = await dataKeyFromOwnPinQuietly(a, pin);
+    if (!dataKey) continue;
+    try { await adopt(a, dataKey, master); } catch { /* left as it was; it will ask for its old PIN */ } finally { dataKey.fill(0); }
+  }
+}
+
+/**
+ * Unlocks the keyring with the password. On a device that had wallets before the keyring, the first unlock creates it: the
+ * password must open the active wallet (its old PIN, wrong tries counted as usual), becomes the one password, and every wallet
+ * with the same PIN joins at once. Wallets with another PIN join later, each after its old PIN (adoptPlatformWallet).
+ */
+async function unlockKeyring(pin: string) {
+  let master: Uint8Array;
+  if (readKeyring()) master = await masterFromPin(pin);
+  else {
+    const a = current();
+    (await dataKeyFromPin(a, pin)).fill(0); // the old PIN of the active wallet, counted like any try
+    master = crypto.getRandomValues(new Uint8Array(32));
+    const ring = await wrapMaster(master, pin);
+    await mutate(() => { if (!readKeyring()) store().setItem(KEYRING_KEY, JSON.stringify(ring)); });
+    const saved = await masterFromPin(pin); // the stored keyring opens with the password, before anything relies on it
+    master.fill(0); master = saved;
+  }
+  try {
+    await rememberDeviceSession(KEYRING_SESSION, master);
+    await adoptSharingPassword(pin, master);
+  } catch (error) { master.fill(0); throw error; }
+  return master;
+}
+
+/** Opens the data key with the PIN, counting wrong tries. In the keyring, the PIN is the one password. */
 async function dataKeyFromPin(a: SavedAccount, pin: string) {
+  if (a.ring) {
+    const master = await masterFromPin(pin);
+    try { return await unwrapRing(a, master); } finally { master.fill(0); }
+  }
+  if (!a.pin) throw new Error("WALLET_NEEDS_OLD_PIN");
   assertMayTry(a.id);
   try {
     const key = await pbkdf2(checkedPin(pin), unb64(a.pin.salt), a.pin.iterations);
@@ -165,9 +341,7 @@ async function dataKeyFromPin(a: SavedAccount, pin: string) {
     return dataKey;
   } catch (error) {
     if (error instanceof Error && error.message === "Enter 6 digits.") throw error;
-    const failures = attempts(a.id).failures + 1, wait = waitAfter(failures);
-    store().setItem(ATTEMPTS_PREFIX + a.id, JSON.stringify({ failures, waitUntil: wait ? Date.now() + wait : 0 } satisfies Attempts));
-    throw Object.assign(new Error(wait ? `Wrong PIN. Try again in ${formatWait(wait)}.` : "Wrong PIN."), { code: wait ? "PIN_WAIT" : "PIN_WRONG", waitUntil: wait ? Date.now() + wait : 0 });
+    throw countWrongTry(a.id);
   }
 }
 
@@ -253,7 +427,8 @@ export async function restoreDeviceSession() {
   const start = epoch;
   let a: SavedAccount;
   try { a = current(); } catch { return false; }
-  const dataKey = await readDeviceSession(a.id);
+  // This wallet's own open session, else (keyring mode) the open keyring, which opens every wallet in it.
+  const dataKey = await readDeviceSession(a.id) ?? await dataKeyFromRingSession(a);
   if (!dataKey) return false;
   try {
     const account = await accountFor(a, dataKey);
@@ -265,6 +440,18 @@ export async function restoreDeviceSession() {
 }
 
 export async function unlockPlatformWallet(pin: string) {
+  if (keyringMode) {
+    // One password: it opens the keyring (creating it on a device that had wallets before), then the active wallet through it.
+    (await unlockKeyring(pin)).fill(0);
+    const start = epoch, a = current();
+    const fromRing = await dataKeyFromRingSession(a);
+    if (!fromRing) throw Object.assign(new Error("This wallet still has its own PIN from before. Enter it once to add it to your password."), { code: "WALLET_NEEDS_OLD_PIN", walletId: a.id });
+    try {
+      const account = await accountFor(a, fromRing);
+      await open(a, account, fromRing, start);
+      return { evm: a.evm, solana: a.solana };
+    } finally { fromRing.fill(0); }
+  }
   const a = current(), start = epoch;
   const dataKey = await dataKeyFromPin(a, pin);
   try {
@@ -287,9 +474,29 @@ export function cancelPlatformWalletOperation() { epoch++; }
 
 // ---- create and restore ----------------------------------------------------------------------------------------
 
-async function saveNew(account: PlatformAccount, pin: string, label: string, backedUp: boolean) {
+/**
+ * In keyring mode, the master key a new wallet is wrapped with: the open keyring's, else the password's. On a fresh device the
+ * first wallet's password creates the keyring.
+ */
+async function masterForNewWallet(pin: string | undefined) {
+  const open = await masterFromSession();
+  if (open) return open;
+  if (pin == null) throw Object.assign(new Error("Enter your password."), { code: "PIN_NEEDED" });
+  checkedPin(pin);
+  if (readKeyring() || read().accounts.length) return unlockKeyring(pin);
+  const master = crypto.getRandomValues(new Uint8Array(32));
+  const ring = await wrapMaster(master, pin);
+  await mutate(() => { if (readKeyring()) throw new Error("WALLET_OPERATION_CANCELLED"); store().setItem(KEYRING_KEY, JSON.stringify(ring)); });
+  await rememberDeviceSession(KEYRING_SESSION, master);
+  return master;
+}
+
+async function saveNew(account: PlatformAccount, pin: string | undefined, label: string, backedUp: boolean) {
   const start = epoch;
+  let master: Uint8Array | null = null;
   try {
+    if (keyringMode) master = await masterForNewWallet(pin);
+    else if (pin == null) throw new Error("Enter 6 digits.");
     return await mutate(async () => {
       if (start !== epoch) throw new Error("WALLET_OPERATION_CANCELLED");
       const c = read();
@@ -298,7 +505,8 @@ async function saveNew(account: PlatformAccount, pin: string, label: string, bac
       const id = crypto.randomUUID(), owner = { id, evm: account.evm.address, solana: account.solana.address };
       const dataKey = crypto.getRandomValues(new Uint8Array(32));
       try {
-        const a: SavedAccount = { ...owner, label: label.trim().slice(0, 32) || "My wallet", backedUp, seal: await sealPhrase(account.mnemonic, dataKey, owner), pin: await wrapWithPin(dataKey, pin, id) };
+        const wrap = master ? { ring: await wrapWithRing(dataKey, master, id) } : { pin: await wrapWithPin(dataKey, pin!, id) };
+        const a: SavedAccount = { ...owner, label: label.trim().slice(0, 32) || "My wallet", backedUp, seal: await sealPhrase(account.mnemonic, dataKey, owner), ...wrap };
         if (start !== epoch) throw new Error("WALLET_OPERATION_CANCELLED");
         const fresh = read();
         fresh.accounts.push(a); fresh.activeId = a.id; persist(fresh);
@@ -308,15 +516,19 @@ async function saveNew(account: PlatformAccount, pin: string, label: string, bac
       } finally { dataKey.fill(0); }
     });
   } catch (error) { if (unlocked !== account) dispose(account); throw error; }
+  finally { master?.fill(0); }
 }
 
-/** A new wallet, ready to use at once. Backing up the recovery phrase is offered right after. */
-export async function createPlatformWallet(pin: string, label = "My wallet") {
-  checkedPin(pin);
+/**
+ * A new wallet, ready to use at once. Backing up the recovery phrase is offered right after. In keyring mode the PIN is the one
+ * password: needed only for the very first wallet (it creates the keyring) or when the keyring is locked; never a new one.
+ */
+export async function createPlatformWallet(pin?: string, label = "My wallet") {
+  if (pin != null || !keyringMode) checkedPin(pin ?? "");
   return saveNew(derivePlatformAccount(createMnemonic()), pin, label, false);
 }
-export async function importPlatformWallet(mnemonic: string, pin: string, label = "Imported wallet") {
-  checkedPin(pin);
+export async function importPlatformWallet(mnemonic: string, pin?: string, label = "Imported wallet") {
+  if (pin != null || !keyringMode) checkedPin(pin ?? "");
   if (!mnemonicIsValid(mnemonic)) throw new Error("Check the words and their order.");
   return saveNew(derivePlatformAccount(normalizeMnemonic(mnemonic)), pin, label, true);
 }
@@ -359,8 +571,25 @@ export async function confirmPlatformBackup(pin: string, checks: { index: number
   if (!checks.length || checks.some(c => words[c.index] !== c.word.trim().toLowerCase())) throw new Error("Those words don't match. Check your copy.");
   await mutate(() => { const c = read(), a = c.accounts.find(x => x.id === c.activeId); if (!a) throw new Error("NO_PLATFORM_WALLET"); a.backedUp = true; persist(c); emit(); });
 }
+/**
+ * Checks the one password against the keyring itself, counting wrong tries and waits as unlocking does, without opening any wallet
+ * or session (for "enter your current password" before a change).
+ */
+export async function checkKeyringPassword(pin: string) {
+  if (!keyringMode || !readKeyring()) throw new Error("NO_KEYRING");
+  (await masterFromPin(pin)).fill(0);
+}
+
 export async function changePlatformPin(oldPin: string, newPin: string) {
   checkedPin(newPin);
+  if (keyringMode && readKeyring()) {
+    // One password: only the keyring's wrap changes; every wallet in it stays wrapped by the same master key.
+    const master = await masterFromPin(oldPin);
+    try { const ring = await wrapMaster(master, newPin); await mutate(() => { store().setItem(KEYRING_KEY, JSON.stringify(ring)); store().removeItem(ATTEMPTS_PREFIX + KEYRING_ID); }); }
+    finally { master.fill(0); }
+    emit();
+    return;
+  }
   const a = current(), start = epoch;
   const dataKey = await dataKeyFromPin(a, oldPin);
   try {
@@ -447,7 +676,7 @@ async function prfFor(credential: string, salt: Uint8Array) {
 
 /** The data key for the active wallet: from this device's open session, else from the PIN. */
 async function dataKeyForChange(a: SavedAccount, pin?: string) {
-  const session = await readDeviceSession(a.id);
+  const session = await readDeviceSession(a.id) ?? await dataKeyFromRingSession(a);
   if (session) return session;
   if (pin == null) throw Object.assign(new Error("Enter your PIN."), { code: "PIN_NEEDED" });
   return dataKeyFromPin(a, pin);

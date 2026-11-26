@@ -6,12 +6,13 @@ import type { ApprovalView } from "@maxxing/wallet-core/request-view";
 import { Avatar, SafetyScore, short } from "./ui/parts";
 import { LookalikeWarning, PhishingBlocked } from "./ui/screens/Blocked";
 import { suffixRules, type SuffixRules } from "./lib/psl";
-import { Busy, PinPad, message } from "./app/kit";
+import { Busy, PasswordForm, message } from "./app/kit";
 import * as wallet from "./lib/wallet";
 import * as approval from "./lib/approval";
 import { ERRORS, LIMITS, type Pending } from "./lib/protocol";
 import { siteName, type SiteName } from "./lib/site";
 import { sites } from "./lib/store";
+import { ChainLogo } from "./ui/logos";
 
 /**
  * The approval window: one site request, shown in full before anything happens. It unlocks the wallet with the PIN if needed,
@@ -94,13 +95,34 @@ function Approve() {
   const site = <SiteCard name={name} known={known} />;
   const decline = () => close(() => approval.decline(pending));
 
+  // A connected site asks to move to another network. Nothing is signed, so the wallet needn't be unlocked.
+  if (pending.kind === "switch") {
+    const target = approval.switchTarget(pending);
+    return <div className="popup"><div className="backdrop" />
+      <div className="scroll" style={{ paddingTop: 12, paddingBottom: 130 }} data-testid="switch-request">
+        {site}
+        <h1 className="ask-title" style={{ overflowWrap: "anywhere" }}>Switch {name.domain} to {target?.name ?? "another network"}?</h1>
+        {target && <div className="card row" style={{ minHeight: 60 }}><ChainLogo networkId={target.networkId} name={target.name} size={32} /><div className="main"><b>{target.name}</b><small>{target.nativeSymbol} pays the fees{target.testnet ? " · test network" : ""}</small></div></div>}
+        <p className="ask-sub" style={{ marginTop: 10 }}>The site's requests will be for {target?.name ?? "that network"}. Every signature still comes here, showing its network.</p>
+        {error && <div className="alert danger" role="alert" style={{ marginTop: 8 }}>{error}</div>}
+      </div>
+      <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><div className="btn-row">
+        <button type="button" className="btn secondary" onClick={decline}>Cancel</button>
+        <button type="button" className="btn primary" disabled={busy || !armed || !target} onClick={async () => {
+          setBusy(true);
+          try { await approval.approveSwitch(pending); window.close(); } catch (e) { setError(message(e)); setBusy(false); }
+        }}>Switch network</button>
+      </div></div>
+    </div>;
+  }
+
   if (!unlocked) {
     const active = snap.accounts.find(a => a.id === snap.activeId);
     return <div className="popup"><div className="backdrop" />
       <div className="scroll" style={{ paddingTop: 12 }}>
         {site}
         {!active ? <div className="card empty" style={{ marginTop: 12 }}>Set up your MAXXING wallet first: open the extension from the toolbar.</div>
-          : <PinPad title="Unlock to continue" subtitle={`${active.label} · ${short(active.evm)}`} error={error} waitUntil={waitUntil} onComplete={async pin => {
+          : <PasswordForm title="Unlock to continue" subtitle={`${active.label} · ${short(active.evm)}`} submitLabel="Unlock" error={error} waitUntil={waitUntil} onComplete={async pin => {
             try { setError(""); await wallet.unlock(pin); setSnap(wallet.snapshot()); } catch (e) { setError(message(e)); setWaitUntil(wallet.pinWaitUntil()); }
           }} />}
       </div>

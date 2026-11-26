@@ -15,7 +15,9 @@ import { blocklist, refreshBlocklist } from "./lib/blocklist";
 import { checkSite } from "./lib/phishing";
 import { refreshSuffixList, suffixRules } from "./lib/psl";
 import { ERRORS, LIMITS, isSiteMethod, type Pending, type SiteAnswer, type SiteRequest, type TabAnswer } from "./lib/protocol";
-import { account, activity, declines, grantedTo, moveOldRecords, sites, trustedLookalikes } from "./lib/store";
+import { account, activity, declines, grantedTo, moveOldRecords, settings, sites, trustedLookalikes } from "./lib/store";
+import { decode } from "./lib/codec";
+import { evmNetwork } from "./lib/chains";
 
 // Session storage (open sessions, the open account, pending requests) is for the extension's own pages, never content scripts.
 void chrome.storage.session.setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })?.catch?.(() => {});
@@ -88,6 +90,19 @@ async function handleSiteRequest(message: SiteRequest, sender: chrome.runtime.Me
   if (waiting) { if (waiting.windowId !== undefined) void chrome.windows.update(waiting.windowId, { focused: true }).catch(() => {}); return { done: true, ok: false, error: ERRORS.busy }; }
 
   const [permission, open] = await Promise.all([sites.get(origin), account.read()]);
+  if (message.method === "evm.switchChain") {
+    // A network the registry lists (test networks only when they're on). A site that isn't connected switches on its own page:
+    // nothing is at stake. A connected site's network is kept per site, and changing it asks the user.
+    const chainId = Number((decode(message.params) as { chainId?: unknown } | null)?.chainId);
+    const network = Number.isSafeInteger(chainId) ? evmNetwork(chainId) : null;
+    if (!network) return { done: true, ok: false, error: ERRORS.unknownChain };
+    if (network.testnet && !(await settings.read()).showTestnets) return { done: true, ok: false, error: ERRORS.testnetsOff };
+    if (!permission || permission.chainId === chainId) return { done: true, ok: true, result: null };
+    if (!permission.chainId) { await sites.setChain(origin, chainId); return { done: true, ok: true, result: null }; } // its first network: no prompt
+    if (await overLimit(origin)) return { done: true, ok: false, error: ERRORS.tooMany };
+    await openApproval({ ...base, kind: "switch" });
+    return { done: false };
+  }
   if (message.method === "connect") {
     if (grantedTo(permission, open)) { await sites.touch(origin); return { done: true, ok: true, result: { evm: open.evm, solana: open.solana } }; }
   } else {
@@ -146,7 +161,7 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     const origin = sender.origin ?? "";
     // A connected site learns the addresses; a listed one never does (a look-alike only got connected by passing the warning).
     Promise.all([sites.get(origin), account.read(), blocklist(), suffixRules()])
-      .then(([permission, open, listed, rules]) => reply(checkSite(origin, listed, rules).kind !== "scam" && grantedTo(permission, open) ? { evm: open.evm, solana: open.solana } : null), () => reply(null));
+      .then(([permission, open, listed, rules]) => reply(checkSite(origin, listed, rules).kind !== "scam" && grantedTo(permission, open) ? { evm: open.evm, solana: open.solana, ...(permission.chainId ? { chainId: permission.chainId } : {}) } : null), () => reply(null));
     return true;
   }
   if (message?.type === "clear-clipboard-later" && fromExtensionPage(sender) && typeof message.hash === "string" && /^[0-9a-f]{64}$/.test(message.hash)) {

@@ -26,7 +26,7 @@ export function ExportWarning({ ticked = [true, true, false] }: { ticked?: boole
       </div>
     </div>
     <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
-      <button type="button" className="btn danger" disabled={!on.every(Boolean)}>Continue to PIN</button>
+      <button type="button" className="btn danger" disabled={!on.every(Boolean)}>Continue</button>
     </div>
   </div>;
 }

@@ -14,8 +14,11 @@ const COLORS: Record<string, string> = {
   "eip155:43114": "#E84142", "eip155:4663": "#C4C6CC", "solana:mainnet": "#9B6BFF", "solana:devnet": "#9B6BFF",
 };
 
+/** The registry's chains, most used first (its `popularRank`), the rest in registry order. */
+const ORDERED = SDK_CHAINS.map((chain, i) => ({ chain, i })).sort((a, b) => (a.chain.popularRank ?? Infinity) - (b.chain.popularRank ?? Infinity) || a.i - b.i).map(x => x.chain);
+
 export function networks(showTestnets: boolean): Network[] {
-  return SDK_CHAINS.filter(chain => showTestnets || !chain.testnet).map(chain => ({ ...chain, rpc: browserRpcUrls(chain) })).filter(chain => chain.rpc.length);
+  return ORDERED.filter(chain => showTestnets || !chain.testnet).map(chain => ({ ...chain, rpc: browserRpcUrls(chain) })).filter(chain => chain.rpc.length);
 }
 
 export function chainMark(chain: Pick<SdkChain, "networkId" | "name">): ChainMark {

@@ -5,7 +5,7 @@
  */
 
 /** What the in-page provider may ask: the same methods the MAXXING SDK's providers send to the wallet window. */
-export const SITE_METHODS = ["connect", "evm.signMessage", "evm.signTypedData", "evm.signTransaction", "solana.signMessage", "solana.signTransaction"] as const;
+export const SITE_METHODS = ["connect", "evm.signMessage", "evm.signTypedData", "evm.signTransaction", "solana.signMessage", "solana.signTransaction", "evm.switchChain"] as const;
 export type SiteMethod = (typeof SITE_METHODS)[number];
 export const isSiteMethod = (method: unknown): method is SiteMethod => typeof method === "string" && (SITE_METHODS as readonly string[]).includes(method);
 
@@ -13,7 +13,8 @@ export const isSiteMethod = (method: unknown): method is SiteMethod => typeof me
 export const PAGE_CHANNEL = "maxxing-wallet-extension";
 export type PageRequest = { channel: typeof PAGE_CHANNEL; dir: "to-wallet"; id: string; method: SiteMethod; params?: unknown };
 export type PageResponse = { channel: typeof PAGE_CHANNEL; dir: "to-page"; id: string; ok: true; result: unknown } | { channel: typeof PAGE_CHANNEL; dir: "to-page"; id: string; ok: false; error: { message: string; code?: number } };
-export type PageEvent = { channel: typeof PAGE_CHANNEL; dir: "to-page"; event: "accountsChanged" | "disconnect"; connection: { evm: string; solana: string } | null };
+/** `chainId`: the network the wallet keeps for this site; the page's provider moves to it. */
+export type PageEvent = { channel: typeof PAGE_CHANNEL; dir: "to-page"; event: "accountsChanged" | "disconnect"; connection: { evm: string; solana: string; chainId?: number } | null };
 
 /** Content script → background. `params` are encoded (codec.ts). */
 export type SiteRequest = { type: "site-request"; id: string; method: SiteMethod; params?: unknown };
@@ -32,7 +33,7 @@ export type Pending = {
   tabId: number; frameId: number; /** The page that asked; answers go to it alone. */ documentId?: string;
   createdAt: number; windowId?: number;
   /** "blocked": a known scam, stopped. "lookalike": a name that reads as MAXXING, warned first; `next` is what follows if the user goes on. */
-  kind: "connect" | "sign" | "blocked" | "lookalike"; next?: "connect" | "sign";
+  kind: "connect" | "sign" | "blocked" | "lookalike" | "switch"; next?: "connect" | "sign";
   /** The user went past the look-alike warning for this request; the site is trusted only if they approve it. */
   passedLookalikeWarning?: boolean;
 };
@@ -65,4 +66,6 @@ export const ERRORS = {
   busy: { message: "Another request from this site is already waiting in the MAXXING window.", code: 4001 },
   tooMany: { message: "Too many requests from this site. Wait a minute and try again.", code: 4001 },
   tooLarge: { message: "This request is too large to show.", code: 4001 },
+  unknownChain: { message: "MAXXING Wallet doesn't support this network.", code: 4902 },
+  testnetsOff: { message: "This is a test network. Turn on test networks in MAXXING Wallet's settings first.", code: 4902 },
 } as const;

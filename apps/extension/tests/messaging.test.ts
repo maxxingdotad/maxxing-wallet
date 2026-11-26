@@ -102,6 +102,41 @@ test("the background refuses what it must: unconnected, another account, floods,
   assert.deepEqual(await new Promise(r => backgroundListener({ type: "site-status" }, sender(7), r)), open);
 });
 
+test("switching networks: free while not connected; a connected site keeps its network per site and a change asks the user", async () => {
+  const fresh = (tab: number) => sender(tab, "https://fresh.example");
+  assert.deepEqual(await ask(request("evm.switchChain", { chainId: 8453 }), fresh(70)), { done: true, ok: true, result: null }, "not connected: nothing to ask");
+  assert.equal((await ask(request("evm.switchChain", { chainId: 999_999_999 }), fresh(70))).error.code, 4902, "not a registry network");
+  assert.equal((await ask(request("evm.switchChain", { chainId: 84532 }), fresh(70))).error.code, 4902, "test networks are off");
+  assert.equal(await store.sites.get("https://fresh.example"), null, "an unconnected site gets no record");
+
+  // The connected site's first network after connecting is taken as is; asking for the same one again asks nothing.
+  const windows = windowsCreated.length;
+  assert.deepEqual(await ask(request("evm.switchChain", { chainId: 8453 }), sender(7)), { done: true, ok: true, result: null });
+  assert.deepEqual(await ask(request("evm.switchChain", { chainId: 8453 }), sender(7)), { done: true, ok: true, result: null });
+  assert.equal((await store.sites.get(SITE))!.chainId, 8453);
+  assert.equal(windowsCreated.length, windows, "no window for these");
+
+  // A change asks; approved, it's kept for the site and the page learns it.
+  assert.deepEqual(await ask(request("evm.switchChain", { chainId: 1 }), sender(7)), { done: false });
+  const asked = await pendingOf(7);
+  assert.equal(asked.kind, "switch");
+  assert.equal(approval.switchTarget(asked)?.evmChainId, 1);
+  await approval.approveSwitch(asked);
+  assert.equal((tabSends.at(-1)!.message as any).ok, true);
+  assert.deepEqual(tabSends.at(-1)!.options, { documentId: "doc-7" });
+  assert.equal((await store.sites.get(SITE))!.chainId, 1);
+  assert.equal((await new Promise<any>(r => backgroundListener({ type: "site-status" }, sender(7), r))).chainId, 1);
+  // Declined: the site stays where it was.
+  assert.deepEqual(await ask(request("evm.switchChain", { chainId: 8453 }), sender(7)), { done: false });
+  await approval.decline(await pendingOf(7));
+  assert.equal((tabSends.at(-1)!.message as any).error.code, 4001);
+  assert.equal((await store.sites.get(SITE))!.chainId, 1);
+  // Reconnecting keeps the site's network; a switch request can never be signed.
+  await store.sites.grant(SITE, wallet.snapshot().public!);
+  assert.equal((await store.sites.get(SITE))!.chainId, 1);
+  assert.throws(() => wallet.review("evm.switchChain" as never, { chainId: 1 }, SITE), /signs nothing/);
+});
+
 test("known scams: one block screen per tab, a few a minute, one Activity entry, and no addresses even if connected before", async () => {
   const before = windowsCreated.length;
   assert.equal((await ask(request("connect"), sender(30, "https://evil.example"))).error.message, "MAXXING blocked this site: it's on the phishing blocklist.");
@@ -153,6 +188,7 @@ test("a name that reads as MAXXING is warned first; going on is remembered, and 
 
 test("auto-lock: counts from the user's own input, forgets the session, stops telling sites, survives worker restarts", async () => {
   assert.equal(alarmsCreated.filter(a => a === "auto-lock").length, 1);
+  assert.equal((await store.settings.read()).autoLockMinutes, 15, "locks after 15 minutes unless the user picks another time");
   assert.equal((await wallet.start()).unlocked, true, "a page opened while the user is active finds the wallet open");
   // A page opening (the approval window a site opened) doesn't count as activity.
   await chrome.storage.session.set({ lastActive: Date.now() - 20 * 60_000 });
@@ -180,6 +216,38 @@ test("auto-lock: counts from the user's own input, forgets the session, stops te
   await import("../src/background?again" as string);
   await new Promise(r => setTimeout(r, 20));
   assert.equal(alarmsCreated.filter(a => a === "auto-lock").length, 1);
+});
+
+test("changing the one password: the new one opens every wallet at once, the old one no longer does", async () => {
+  const NEW = "135790";
+  await wallet.unlock(PIN);
+  const first = wallet.snapshot().activeId!;
+  await wallet.create(undefined, "Second wallet"); // no PIN of its own: the open password's keyring takes it
+  const second = wallet.snapshot().activeId!;
+  assert.notEqual(second, first);
+  await assert.rejects(wallet.changePassword("000000", NEW), /Wrong PIN/, "the current password is checked first");
+  // The "current password" step checks the keyring itself: it opens nothing and logs no unlock.
+  const unlocksBefore = (await store.activity.all()).filter(a => a.text === "Wallet unlocked").length;
+  await assert.rejects(wallet.checkPassword("000000"), /Wrong PIN/);
+  await wallet.checkPassword(PIN);
+  assert.equal((await store.activity.all()).filter(a => a.text === "Wallet unlocked").length, unlocksBefore);
+  await wallet.changePassword(PIN, NEW);
+  await wallet.lock();
+  await assert.rejects(wallet.unlock(PIN), /Wrong PIN/);
+  await wallet.unlock(NEW);
+  assert.equal(wallet.snapshot().unlocked, true);
+  await wallet.select(first);
+  assert.equal(wallet.snapshot().unlocked, true, "the other wallet opens with the new password too, no PIN of its own");
+  assert.ok((await store.activity.all()).some(a => a.text === "Password changed"));
+  await wallet.changePassword(NEW, PIN); // back, for the tests after this
+});
+
+test("strings: one table, filled by name, English for anything missing", async () => {
+  const { t, setLanguage } = await import("../src/lib/strings");
+  assert.equal(t("settings.version", { version: "1.2.3", n: 2 }), "MAXXING Wallet 1.2.3 · 2 wallets on this device");
+  setLanguage("xx-YY");
+  assert.equal(t("settings.title"), "Settings", "an unknown language falls back to English");
+  setLanguage("en");
 });
 
 test("nothing on the way carries a secret: storage, tab and page messages, windows opened", async () => {

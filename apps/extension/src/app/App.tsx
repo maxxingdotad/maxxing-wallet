@@ -1,14 +1,24 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, ExternalLink, Globe, KeyRound, Lock, LogOut, Maximize2, PanelRight, Plus, RefreshCw, ShieldCheck, Trash2, Download } from "lucide-react";
+import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Code2, ExternalLink, Eye, EyeOff, Globe, KeyRound, LifeBuoy, Lock, LogOut, Maximize2, PanelRight, Plus, RefreshCw, ShieldCheck, Trash2, Download } from "lucide-react";
 import { Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
-import { Busy, PageHead, PinPad, copy, message, useToast } from "./kit";
+import { Busy, PageHead, PasswordForm, copy, message, useEscape, useToast } from "./kit";
 import { Onboarding } from "./Onboarding";
 import { ExportFlow } from "./Export";
 import { SendView } from "./Send";
 import { SwapView } from "./Swap";
 import * as wallet from "../lib/wallet";
-import { loadPortfolio, type Portfolio } from "../lib/balances";
-import { activity as activityLog, AUTO_LOCK_CHOICES, settings as settingsStore, sites as siteStore, type Activity, type Settings, type SitePermission } from "../lib/store";
+import { loadPortfolio, shownNetworks, type Portfolio } from "../lib/balances";
+import { AssetList, ManageAssets, NetworkButton, NetworkSheet } from "./Assets";
+import { ReceiveView } from "./Receive";
+import { TokenDetail } from "./TokenDetail";
+import { ActivityView } from "./Activity";
+import { ConnectedSites } from "./Sites";
+import { ApprovalsView } from "./Approvals";
+import { ChangePassword } from "./Security";
+import { LINKS, listNames, t } from "../lib/strings";
+import { networks } from "../lib/chains";
+import { NO_PREFS, type AssetPrefs } from "../lib/assets";
+import { assetPrefs as assetPrefsStore, AUTO_LOCK_CHOICES, settings as settingsStore, sites as siteStore, type Settings, type SitePermission } from "../lib/store";
 
 const COLORS = ["#E8E4DC", "#A36AFF", "#3CB07A", "#D4B15A", "#4FB4F7", "#E15D55", "#C4C6CC"];
 const colorFor = (id: string) => COLORS[[...id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % COLORS.length]!;
@@ -20,7 +30,7 @@ const asAccount = (w: WalletSummary, index = w.selected, value = 0): Account => 
   return { id: `${w.id}:${x.index}`, name: x.label, color: colorFor(`${w.id}:${x.index}`), evm: x.evm, solana: x.solana, usd: value };
 };
 
-type View = { name: "home" } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" };
+type View = { name: "home" } | { name: "old-wallets" } | { name: "manage-assets" } | { name: "token"; holding: Holding; all: Holding[] } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" } | { name: "sites" } | { name: "approvals" } | { name: "change-password" };
 
 export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
   const [snap, setSnap] = useState<wallet.WalletSnapshot | null>(null);
@@ -40,36 +50,100 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
   if (snap.storageError) return frame(<div className="popup"><div className="backdrop" /><div className="scroll" style={{ paddingTop: 40 }}><div className="alert danger"><AlertTriangle size={17} /><span>{message(new Error(snap.storageError))}</span></div></div></div>);
   if (onboarding || !snap.accounts.length) return frame(<Onboarding onDone={() => { setOnboarding(false); refresh(); }} />);
   if (view.name === "add") return frame(<Onboarding addOnly={view.kind} onCancel={() => setView({ name: "home" })} onDone={() => { refresh(); setView({ name: "home" }); }} />);
+  // A wallet from before the one password: its old PIN once (after the password, if the extension is locked), then never again.
+  const oldOnes = wallet.needingOldPin();
+  if (!snap.unlocked && oldOnes.some(w => w.id === snap.activeId)) return frame(<OldWallet wallet={oldOnes.find(w => w.id === snap.activeId)!} others={oldOnes.length - 1} onDone={refresh} />);
+  if (view.name === "old-wallets" && oldOnes.length) return frame(<OldWallet wallet={oldOnes[0]!} others={oldOnes.length - 1} onDone={() => { refresh(); if (oldOnes.length <= 1) setView({ name: "home" }); }} onBack={() => setView({ name: "home" })} />);
   if (!snap.unlocked) return frame(<Unlock snap={snap} onOpen={refresh} onImport={() => setView({ name: "add", kind: "import" })} />);
   const active = snap.accounts.find(a => a.id === snap.activeId)!;
   const go = (next: View) => setView(next);
   const onTab = (tab: DockTab) => go(tab === "home" ? { name: "home" } : tab === "swap" ? { name: "swap" } : tab === "activity" ? { name: "activity" } : { name: "settings" });
 
   switch (view.name) {
+    case "manage-assets": return frame(<ManageAssetsLoader account={active} onBack={() => go({ name: "home" })} />);
+    case "token": return frame(<TokenDetail holding={view.holding} all={view.all} onBack={() => go({ name: "home" })} onSend={h => go({ name: "send", holding: h })} onReceive={() => go({ name: "receive" })} onSwap={() => go({ name: "swap" })} />);
     case "send": return frame(<SendView holding={view.holding} account={active} onBack={() => go({ name: "home" })} toast={showToast} />);
-    case "receive": return frame(<Receive account={active} onBack={() => go({ name: "home" })} toast={showToast} />);
+    case "receive": return frame(<ReceiveView account={active} onBack={() => go({ name: "home" })} toast={showToast} />);
     case "swap": return frame(<SwapView account={active} onTab={onTab} toast={showToast} />);
-    case "activity": return frame(<ActivityView onTab={onTab} />);
+    case "activity": return frame(<ActivityView account={{ evm: active.evm, solana: active.solana }} onTab={onTab} />);
     case "settings": return frame(<SettingsView snap={snap} mode={mode} go={go} onTab={onTab} toast={showToast} onChanged={refresh} />);
     case "export": return frame(<ExportFlow kind={view.kind} onClose={() => go({ name: "settings" })} />);
+    case "change-password": return frame(<ChangePassword onDone={() => go({ name: "settings" })} toast={showToast} />);
+    case "sites": return frame(<ConnectedSites snap={snap} onBack={() => go({ name: "settings" })} toast={showToast} />);
+    case "approvals": return frame(<ApprovalsView account={{ evm: active.evm }} onBack={() => go({ name: "settings" })} toast={showToast} />);
     case "remove": return frame(<RemoveWallet backedUp={active.backedUp} onClose={() => go({ name: "settings" })} onRemoved={() => { refresh(); go({ name: "home" }); }} />);
     default: return frame(<HomeView snap={snap} active={active} go={go} onTab={onTab} onChanged={refresh} toast={showToast} />);
   }
 }
 
+/** Manage assets for the networks shown now, with what's held there. */
+function ManageAssetsLoader({ account, onBack }: { account: WalletSummary; onBack: () => void }) {
+  const [data, setData] = useState<{ shown: ReturnType<typeof shownNetworks>; holdings: Holding[] } | null>(null);
+  useEffect(() => { void settingsStore.read().then(async s => setData({ shown: shownNetworks(s.showTestnets, s.network), holdings: (await loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets, s.network)).holdings })); }, [account.evm]);
+  if (!data) return <div className="popup"><div className="backdrop" /><PageHead title="Manage assets" onBack={onBack} /><SkeletonRows count={5} /></div>;
+  return <ManageAssets shown={data.shown} holdings={data.holdings} onBack={onBack} />;
+}
+
+/** Placeholder rows while balances load: the list's shape, gently pulsing. */
+function SkeletonRows({ count }: { count: number }) {
+  return <div className="card rows" aria-busy="true" aria-label="Loading">{Array.from({ length: count }, (_, i) => <div key={i} className="row skeleton-row"><span className="sk sk-circle" /><div className="main"><span className="sk sk-line" /><span className="sk sk-line short" /></div><span className="sk sk-amount" /></div>)}</div>;
+}
+
+/**
+ * The lock screen: the MAXXING hat, one password field, Unlock. Wrong tries show under the field, and the growing wait counts down.
+ * "Forgot password" explains that the password only protects this device and that starting over means restoring with the
+ * recovery phrase, warning first about any wallet that isn't backed up.
+ */
 function Unlock({ snap, onOpen, onImport }: { snap: wallet.WalletSnapshot; onOpen: () => void; onImport: () => void }) {
-  const active = snap.accounts.find(a => a.id === snap.activeId) ?? snap.accounts[0]!;
   const [error, setError] = useState(""), [waitUntil, setWaitUntil] = useState(wallet.pinWaitUntil());
-  return <div className="popup"><div className="backdrop" />
-    <div className="scroll" style={{ paddingTop: 22 }}>
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <img src="/brand/cap.webp" alt="" style={{ width: 92, filter: "drop-shadow(0 10px 18px rgb(0 0 0 / .5))" }} />
-        <span className="chip"><Avatar account={asAccount(active)} />{selectedAccount(active).label} · {short(active.evm)}</span>
-      </div>
-      <PinPad title="Enter your PIN" error={error} waitUntil={waitUntil} onComplete={async pin => {
-        try { setError(""); await wallet.unlock(pin); onOpen(); } catch (e) { setError(message(e)); setWaitUntil(wallet.pinWaitUntil()); }
+  const [forgot, setForgot] = useState(false);
+  const notBackedUp = snap.accounts.filter(a => !a.backedUp);
+  return <div className="popup unlock" data-testid="unlock"><div className="backdrop" />
+    <div className="scroll">
+      <div className="unlock-hero" aria-hidden="true"><span className="unlock-halo" /><img className="unlock-cap" src="/brand/cap.webp" alt="" /></div>
+      <h1 className="unlock-title">Unlock MAXXING Wallet</h1>
+      <p className="unlock-sub">One password opens every wallet on this device.</p>
+      <PasswordForm submitLabel="Unlock" error={error} waitUntil={waitUntil} onComplete={async password => {
+        try { setError(""); await wallet.unlock(password); onOpen(); }
+        catch (e) { if ((e as { code?: string }).code === "WALLET_NEEDS_OLD_PIN") { onOpen(); return; } setError(message(e)); setWaitUntil(wallet.pinWaitUntil()); }
       }} />
-      <div style={{ textAlign: "center", marginTop: 14 }}><button type="button" className="link-btn" onClick={onImport}>Forgot your PIN? Restore with your recovery phrase</button></div>
+      <div className="unlock-foot"><button type="button" className="link-btn" aria-expanded={forgot} onClick={() => setForgot(f => !f)}>Forgot password?</button></div>
+      {forgot && <div className="card unlock-forgot" data-testid="forgot-password">
+        {notBackedUp.length > 0 && <div className="alert danger" style={{ marginBottom: 10 }}><AlertTriangle size={16} /><span>
+          <b>{notBackedUp.length === 1 ? `${notBackedUp[0]!.label} isn't backed up.` : `${notBackedUp.length} wallets aren't backed up.`}</b> Starting over without {notBackedUp.length === 1 ? "its" : "their"} recovery phrase loses {notBackedUp.length === 1 ? "it" : "them"} for good. Keep trying to remember your password first.</span></div>}
+        <p>Your password only protects MAXXING Wallet on this device. MAXXING never has it, so it can't be reset or sent to you.</p>
+        <p>To start over, remove MAXXING Wallet from the browser, add it again, and restore each wallet with its recovery phrase. Your funds stay on the blockchain; the phrase brings them back.</p>
+        {!wallet.passwordSet() && <button type="button" className="link-btn" style={{ fontSize: 12.5 }} onClick={onImport}>Restore with a recovery phrase</button>}
+      </div>}
+    </div>
+  </div>;
+}
+
+/**
+ * A wallet from before the one password: it still has its own PIN. Entered once, the wallet moves behind the password (its key is
+ * checked against its addresses before anything changes) and never asks for it again.
+ */
+function OldWallet({ wallet: w, others, onDone, onBack }: { wallet: { id: string; label: string; evm: string }; others: number; onDone: () => void; onBack?: () => void }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const [error, setError] = useState(""), [busy, setBusy] = useState(false);
+  useEffect(() => { void wallet.passwordOpen().then(setOpen); }, [w.id]);
+  if (open === null || busy) return <div className="popup"><div className="backdrop" /><Busy text={busy ? "Adding it to your password…" : "Opening…"} /></div>;
+  return <div className="popup"><div className="backdrop" />
+    {onBack && <PageHead title="Older wallets" onBack={onBack} />}
+    <div className="scroll" style={{ paddingTop: onBack ? 4 : 22 }}>
+      <div className="card" style={{ padding: 12, marginBottom: 6, fontSize: 12.5, lineHeight: 1.5 }} data-testid="old-wallet">
+        <b style={{ display: "block", fontSize: 13.5, marginBottom: 2 }}>{w.label} · {short(w.evm)}</b>
+        {open ? `This wallet was made before MAXXING Wallet used one password. Enter its old PIN once; after that your password opens it.${others ? ` ${others} more wallet${others === 1 ? "" : "s"} like it.` : ""}` : "Enter your password first."}
+      </div>
+      {open
+        ? <PasswordForm key="old" title="Its old PIN" label="Old PIN" submitLabel="Add to my password" error={error} waitUntil={wallet.vault.pinWaitUntil(w.id)} onComplete={async pin => {
+            setBusy(true); setError("");
+            try { await wallet.addOldWallet(w.id, pin); onDone(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(false); } // here it really is the old PIN
+          }} />
+        : <PasswordForm key="password" title="Enter your password" submitLabel="Unlock" error={error} waitUntil={wallet.pinWaitUntil()} onComplete={async pin => {
+            try { setError(""); await wallet.unlock(pin); onDone(); setOpen(true); }
+            catch (e) { if ((e as { code?: string }).code === "WALLET_NEEDS_OLD_PIN") { setOpen(true); return; } setError(message(e)); }
+          }} />}
     </div>
   </div>;
 }
@@ -79,34 +153,45 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
   const [loading, setLoading] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [prefs, setPrefs] = useState<Settings | null>(null);
+  const [assetChoices, setAssetChoices] = useState<AssetPrefs>(NO_PREFS);
+  const [picking, setPicking] = useState(false);
+  const [offerPassword, setOfferPassword] = useState(false);
+  useEffect(() => { void wallet.newPasswordOffered().then(setOfferPassword); }, []);
   const load = useCallback(async () => {
     setLoading(true);
     const s = await settingsStore.read(); setPrefs(s);
-    try { setPortfolio(await loadPortfolio({ evm: active.evm, solana: active.solana }, s.showTestnets)); } finally { setLoading(false); }
+    setAssetChoices(await assetPrefsStore.read());
+    try { setPortfolio(await loadPortfolio({ evm: active.evm, solana: active.solana }, s.showTestnets, s.network)); } finally { setLoading(false); }
   }, [active.evm, active.solana]);
   useEffect(() => { setPortfolio(null); void load(); }, [load]);
+  const shown = prefs ? shownNetworks(prefs.showTestnets, prefs.network) : [];
   const holdings = portfolio?.holdings ?? [];
   const byChain = new Map<string, { chain: Holding["chain"]; usd: number }>();
   for (const h of holdings) byChain.set(h.chain.id, { chain: h.chain, usd: (byChain.get(h.chain.id)?.usd ?? 0) + h.usd });
   return <div className="popup">
     <div className="backdrop" />
     <header className="top">
-      <button type="button" className="account-pill" onClick={() => setSheet(true)} aria-label="Switch account"><Avatar account={asAccount(active)} /><b>{selectedAccount(active).label}</b><ChevronDown size={16} /></button>
+      <button type="button" className="account-pill" onClick={() => setSheet(true)} aria-label={`Switch account (now ${selectedAccount(active).label})`} title={selectedAccount(active).label}><Avatar account={asAccount(active)} /><b>{selectedAccount(active).label}</b><ChevronDown size={16} /></button>
       <div className="top-right">
-        <button type="button" className="chip" onClick={async () => { await settingsStore.write({ showTestnets: !prefs?.showTestnets }); void load(); }} title="Show or hide test networks">
-          <span className="dot" style={{ background: "conic-gradient(#A36AFF, #3FD5F5, #E8E4DC, #A36AFF)" }} />{prefs?.showTestnets ? "All + testnets" : "All chains"}
-        </button>
+        <NetworkButton selected={prefs?.network ?? "all"} onOpen={() => setPicking(true)} />
+        <button type="button" className="icon-btn" aria-label={prefs?.hideBalances ? "Show balances" : "Hide balances"} aria-pressed={!!prefs?.hideBalances}
+          onClick={async () => { await settingsStore.write({ hideBalances: !prefs?.hideBalances }); setPrefs(await settingsStore.read()); }}>{prefs?.hideBalances ? <EyeOff size={17} strokeWidth={1.7} /> : <Eye size={17} strokeWidth={1.7} />}</button>
         <button type="button" className="icon-btn" aria-label="Refresh" onClick={() => void load()}><RefreshCw size={17} strokeWidth={1.7} className={loading ? "spinning" : ""} /></button>
       </div>
     </header>
     <div className="scroll">
-      <Orbit total={portfolio?.totalUsd ?? 0} change={null} shares={[...byChain.values()]} note={!portfolio ? "Reading your balances…" : portfolio.source === "chain" ? "USD shown for stablecoins" : undefined} />
+      <Orbit hidden={!!prefs?.hideBalances} total={portfolio?.totalUsd ?? 0} change={null} shares={[...byChain.values()]} note={!portfolio ? "Reading your balances…" : portfolio.source === "chain" ? "USD shown for stablecoins" : undefined} />
       <div className="actions">
         <button type="button" className="action" onClick={() => go({ name: "send" })}><i><ArrowUpRight size={18} /></i>Send</button>
         <button type="button" className="action" onClick={() => go({ name: "receive" })}><i><ArrowDownLeft size={18} /></i>Receive</button>
         <button type="button" className="action" onClick={() => go({ name: "swap" })}><i><ArrowLeftRight size={18} /></i>Swap</button>
         <button type="button" className="action" onClick={() => void chrome.tabs.create({ url: "https://maxxing.ad" })}><i><Plus size={18} /></i>Buy</button>
       </div>
+      {wallet.needingOldPin().length > 0 && <div className="alert warn" style={{ marginBottom: 10 }}><KeyRound size={16} /><span><b>{wallet.needingOldPin().length === 1 ? "An older wallet still has" : `${wallet.needingOldPin().length} older wallets still have`} its own PIN.</b> Enter it once and your password opens it from then on. <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "old-wallets" })}>Add to my password</button></span></div>}
+      {offerPassword && <div className="alert" style={{ marginBottom: 10, background: "var(--surface-2)", border: "1px solid var(--line)" }} data-testid="offer-new-password"><KeyRound size={16} /><span>
+        <b>Use one password for everything.</b> Your wallets now open with one password: the PIN you just entered. You can choose a new one now (optional). <span style={{ display: "inline-flex", gap: 12 }}>
+          <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "change-password" })}>Choose a new password</button>
+          <button type="button" className="link-btn" style={{ fontSize: 12, color: "var(--muted)" }} onClick={async () => { await wallet.dismissNewPasswordOffer(); setOfferPassword(false); }}>Keep it</button></span></span></div>}
       {!active.backedUp && <div className="alert warn" style={{ marginBottom: 10 }}><ShieldCheck size={16} /><span><b>Back up your recovery phrase.</b> It's the only way back in if you lose this device. <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "export", kind: "phrase" })}>Back up now</button></span></div>}
       <div className="section-head"><h2>Tokens</h2>{portfolio && <button type="button" onClick={() => void load()}>{portfolio.source === "api" ? "Live from MAXXING" : "Read from the networks"}</button>}</div>
       {/* Only when every endpoint of some network failed after retries: one quiet line, never a list of network names. */}
@@ -114,14 +199,13 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
         <span>Some balances may be out of date</span>
         <button type="button" className="link-btn" disabled={loading} onClick={() => void load()}>{loading ? "Retrying…" : "Retry"}</button>
       </div> : null}
-      {!portfolio ? <Busy text="Reading balances on every chain…" /> : holdings.length === 0
-        ? <div className="card empty">Nothing here yet.<br />Receive tokens on any chain to see them in one balance.<div style={{ marginTop: 12 }}><button type="button" className="btn secondary" onClick={() => go({ name: "receive" })}><ArrowDownLeft size={16} />Receive</button></div></div>
-        : <div className="card rows">{holdings.map(h => <button type="button" key={`${h.chain.id}:${h.address ?? h.symbol}`} className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => go({ name: "send", holding: h })}>
-          <TokenMark holding={h} />
-          <div className="main"><b>{h.name}</b><small className="num">{h.amount} {h.symbol} · {h.chain.name}</small></div>
-          <div className="end"><b className="num">{h.priced === false ? "—" : usd(h.usd)}</b><small>{h.priced === false ? "no price yet" : ""}</small></div>
-        </button>)}</div>}
+      {!prefs ? <SkeletonRows count={4} /> : <AssetList shown={shown} holdings={holdings} prefs={assetChoices} pending={!portfolio} hideBalances={!!prefs?.hideBalances}
+        onOpen={h => go({ name: "token", holding: h, all: holdings })} onManage={() => go({ name: "manage-assets" })}
+        onShowSpam={async () => { await assetPrefsStore.update(p => ({ ...p, showSpam: true })); setAssetChoices(await assetPrefsStore.read()); }} />}
+      {portfolio && holdings.length === 0 && <p className="empty-hint">Nothing held yet. <button type="button" className="link-btn" onClick={() => go({ name: "receive" })}>Receive</button> on any network to see it here.</p>}
     </div>
+    {picking && prefs && <NetworkSheet selected={prefs.network} showTestnets={prefs.showTestnets} onClose={() => setPicking(false)}
+      onPick={async networkId => { setPicking(false); await settingsStore.write({ network: networkId }); setPortfolio(null); void load(); }} />}
     <Dock tab="home" onTab={onTab} />
     {sheet && <AccountsSheet snap={snap} onClose={() => setSheet(false)} onChanged={onChanged} onAdd={kind => { setSheet(false); go({ name: "add", kind }); }}
       onSwitched={(label, evm) => void siteStore.all().then(all => { const others = all.filter(s => s.evm.toLowerCase() !== evm.toLowerCase()).length; toast(others ? `${label} is open. ${others} connected site${others === 1 ? "" : "s"} still use${others === 1 ? "s" : ""} another account until you connect again.` : `${label} is open.`); })} />}
@@ -157,9 +241,10 @@ function AccountsSheet({ snap, onClose, onChanged, onAdd, onSwitched }: { snap: 
   useEffect(() => { const open = active.accounts.find(a => a.index === active.selected); if (open) loadTotal(open); }, [openEvm]);
   const [copied, setCopied] = useState("");
   const copyAddress = async (evm: string) => { await copy(evm); setCopied(evm); setTimeout(() => setCopied(""), 1500); };
+  useEscape(onClose);
   return <>
     <div className="scrim" onClick={onClose} />
-    <section className="sheet" role="dialog" aria-label="Accounts">
+    <section className="sheet" role="dialog" aria-modal="true" aria-label="Accounts">
       <div className="grab" />
       <div className="sheet-head"><h2>{active.label}</h2><button type="button" className="chip" onClick={() => setEditing(e => !e)}>{editing ? "Done" : "Edit"}</button></div>
       <div style={{ overflowY: "auto", padding: "0 12px" }}>
@@ -219,28 +304,6 @@ function Receive({ account, onBack, toast }: { account: wallet.WalletSnapshot["a
   </div>;
 }
 
-function ActivityView({ onTab }: { onTab: (t: DockTab) => void }) {
-  const [items, setItems] = useState<Activity[] | null>(null);
-  useEffect(() => { void activityLog.all().then(setItems); }, []);
-  const icon = (kind: Activity["kind"]) => kind === "export" ? <KeyRound size={16} /> : kind === "blocked" ? <AlertTriangle size={16} /> : kind === "lock" ? <Lock size={16} /> : kind === "send" ? <ArrowUpRight size={16} /> : <Globe size={16} />;
-  return <div className="popup"><div className="backdrop" />
-    <PageHead title="Activity" />
-    <div className="scroll">
-      {!items ? <Busy text="Loading…" /> : !items.length ? <div className="card empty">Connections, signatures, sends, locks and exports show up here. They stay on this device.</div>
-        : <div className="card rows">{items.map((a, i) => <div key={i} className="row">
-          <span className="token"><span className="logo" style={{ background: a.kind === "export" || a.kind === "blocked" ? "var(--negative-soft)" : "var(--surface-3)", color: a.kind === "export" || a.kind === "blocked" ? "var(--negative)" : "var(--text-2)" }}>{icon(a.kind)}</span></span>
-          <div className="main"><b>{a.text}</b><small>{a.site ? `${a.site.replace(/^https?:\/\//, "")} · ` : ""}{new Date(a.at).toLocaleString()}</small></div>
-        </div>)}</div>}
-    </div>
-    <Dock tab="activity" onTab={onTab} />
-  </div>;
-}
-
-/** Which account a site was connected with, by name ("Wallet · Account 2"), or its short address if it's in no wallet here. */
-function accountNamed(snap: wallet.WalletSnapshot, evm: string) {
-  for (const w of snap.accounts) for (const a of w.accounts) if (a.evm.toLowerCase() === evm.toLowerCase()) return w.accounts.length > 1 || snap.accounts.length > 1 ? `${w.label} · ${a.label}` : a.label;
-  return short(evm);
-}
 
 function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: wallet.WalletSnapshot; mode: "popup" | "panel" | "tab"; go: (v: View) => void; onTab: (t: DockTab) => void; toast: (t: string) => void; onChanged: () => void }) {
   const [prefs, setPrefs] = useState<Settings | null>(null);
@@ -250,10 +313,15 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
   const item = (icon: React.ReactNode, label: string, onClick: () => void, danger = false) => <button type="button" className="row" style={{ width: "100%", textAlign: "left", minHeight: 52 }} onClick={onClick}>
     <span style={{ color: danger ? "var(--negative)" : "var(--text-2)", display: "grid" }}>{icon}</span><div className="main"><b style={{ color: danger ? "var(--negative)" : undefined }}>{label}</b></div><ChevronRight size={16} style={{ color: "var(--dim)" }} />
   </button>;
+  const toggle = (label: string, note: string, on: boolean, flip: () => void) => <div className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
+    <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{label}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>{note}</div></div>
+    <button type="button" role="switch" aria-label={label} aria-checked={on} className={`toggle${on ? " on" : ""}`} onClick={flip} />
+  </div>;
+  const link = (icon: React.ReactNode, label: string, url: string) => item(icon, label, () => void chrome.tabs.create({ url }));
   return <div className="popup"><div className="backdrop" />
-    <PageHead title="Settings" />
+    <PageHead title={t("settings.title")} />
     <div className="scroll">
-      <div className="section-head" style={{ marginTop: 4 }}><h2>View</h2></div>
+      <div className="section-head" style={{ marginTop: 4 }}><h2>{t("settings.view")}</h2></div>
       <div className="card rows">
         {mode !== "panel" && item(<PanelRight size={18} />, "Open in the side panel", async () => {
           try { const win = await chrome.windows.getCurrent(); await chrome.sidePanel.open({ windowId: win.id! }); if (mode === "popup") window.close(); }
@@ -261,40 +329,45 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
         })}
         {mode !== "tab" && item(<Maximize2 size={18} />, "Open in a full tab", () => { void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?mode=tab") }); if (mode === "popup") window.close(); })}
       </div>
-      <div className="section-head"><h2>Security</h2></div>
+      <div className="section-head"><h2>{t("settings.security")}</h2></div>
       <div className="card" style={{ padding: "12px 12px 14px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Lock automatically after</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>Without use, the wallet locks and only your PIN opens it again.</div>
+        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("settings.autolock")}</div>
+        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{t("settings.autolock.note")}</div>
         <div className="seg">{AUTO_LOCK_CHOICES.map(m => <button key={m} type="button" className={prefs?.autoLockMinutes === m ? "on" : ""} onClick={() => void save({ autoLockMinutes: m })}>{m < 60 ? `${m} min` : `${m / 60} h`}</button>)}</div>
       </div>
       <div className="card rows" style={{ marginTop: 8 }}>
         {item(<KeyRound size={18} />, "Show recovery phrase", () => go({ name: "export", kind: "phrase" }))}
         {item(<KeyRound size={18} />, "Export private keys", () => go({ name: "export", kind: "keys" }))}
+        {item(<KeyRound size={18} />, t("settings.changePassword"), () => go({ name: "change-password" }))}
         {item(<Lock size={18} />, "Lock now", async () => { await wallet.lock(); onChanged(); })}
       </div>
-      <div className="section-head"><h2>Networks</h2></div>
-      <div className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
-        <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>Show test networks</div><div style={{ fontSize: 12, color: "var(--muted)" }}>Sepolia, Base Sepolia, Solana Devnet and others.</div></div>
-        <button type="button" role="switch" aria-checked={!!prefs?.showTestnets} className={`toggle${prefs?.showTestnets ? " on" : ""}`} onClick={() => void save({ showTestnets: !prefs?.showTestnets })} />
+      <div className="section-head"><h2>{t("settings.privacy")}</h2></div>
+      {toggle(t("settings.hideBalances"), t("settings.hideBalances.note"), !!prefs?.hideBalances, () => void save({ hideBalances: !prefs?.hideBalances }))}
+      <div className="section-head"><h2>{t("settings.networks")}</h2></div>
+      {toggle(t("settings.testnets"), t("settings.testnets.note", { names: listNames(networks(true).filter(n => n.testnet).map(n => n.name)) }), !!prefs?.showTestnets, () => void save({ showTestnets: !prefs?.showTestnets }))}
+      <div className="card" style={{ padding: 12, marginTop: 8 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{t("settings.currency")}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>{t("settings.currency.note")}</div></div>
+      <div className="section-head"><h2>{t("settings.sites")}</h2></div>
+      <div className="card rows">
+        {item(<Globe size={18} />, `Connected sites${connected.length ? ` (${connected.length})` : ""}`, () => go({ name: "sites" }))}
+        {item(<ShieldCheck size={18} />, "Token approvals", () => go({ name: "approvals" }))}
       </div>
-      <div className="section-head"><h2>Connected sites</h2><span style={{ fontSize: 12, color: "var(--muted)" }}>{connected.length}</span></div>
-      {connected.length === 0 ? <div className="card empty" style={{ padding: 16 }}>No site is connected. Sites ask first, and you choose.</div>
-        : <div className="card rows">{connected.map(s => <div key={s.origin} className="row">
-          <span className="favicon" style={{ width: 32, height: 32, borderRadius: 9, background: "var(--surface-3)", display: "grid", placeItems: "center", fontWeight: 700 }}>{new URL(s.origin).hostname[0]!.toUpperCase()}</span>
-          <div className="main"><b>{new URL(s.origin).host}</b><small className="num">{accountNamed(snap, s.evm)} · since {new Date(s.connectedAt).toLocaleDateString()}</small></div>
-          <button type="button" className="chip" onClick={async () => { await siteStore.revoke(s.origin); await activityLog.add({ kind: "revoke", text: "Disconnected a site", site: s.origin }); await wallet.announce(); setConnected(await siteStore.all()); toast("Disconnected"); }}>Disconnect</button>
-        </div>)}</div>}
       <div className="section-head"><h2>Wallet</h2></div>
       <div className="card rows">
         {item(<LogOut size={18} />, "Remove this wallet from this device", () => go({ name: "remove" }), true)}
       </div>
-      <p style={{ fontSize: 11.5, color: "var(--dim)", textAlign: "center", margin: "16px 0 4px", lineHeight: 1.5 }}>MAXXING Wallet {chrome.runtime.getManifest().version} · {snap.accounts.length} wallet{snap.accounts.length === 1 ? "" : "s"} on this device<br />Your keys stay on this device. MAXXING never has them.</p>
+      <div className="section-head"><h2>{t("settings.about")}</h2></div>
+      <div className="card rows" data-testid="about">
+        {link(<LifeBuoy size={18} />, t("settings.support"), LINKS.support)}
+        {link(<Code2 size={18} />, t("settings.source"), LINKS.source)}
+        {link(<ShieldCheck size={18} />, t("settings.securityPolicy"), LINKS.security)}
+      </div>
+      <p style={{ fontSize: 11.5, color: "var(--dim)", textAlign: "center", margin: "16px 0 4px", lineHeight: 1.5 }} data-testid="version">{t("settings.version", { version: chrome.runtime.getManifest().version, n: snap.accounts.length })}<br />{t("settings.keysNote")}</p>
     </div>
     <Dock tab="settings" onTab={onTab} />
   </div>;
 }
 
-/** Removing a wallet: only once it's backed up, after the same warning and the PIN. */
+/** Removing a wallet: only once it's backed up, after the same warning and the password. */
 function RemoveWallet({ backedUp, onClose, onRemoved }: { backedUp: boolean; onClose: () => void; onRemoved: () => void }) {
   const [sure, setSure] = useState(false);
   const [error, setError] = useState(""), [waitUntil, setWaitUntil] = useState(wallet.pinWaitUntil());
@@ -304,7 +377,7 @@ function RemoveWallet({ backedUp, onClose, onRemoved }: { backedUp: boolean; onC
       {!backedUp ? <><div className="danger-mark"><Trash2 size={28} /></div><h2 className="center-title">Back up first</h2><p className="center-sub">This wallet isn't backed up. Removing it now would lose it for good. Show your recovery phrase and write it down first.</p></>
         : !sure ? <><div className="danger-mark"><Trash2 size={28} /></div><h2 className="center-title">Remove from this device?</h2><p className="center-sub">Its keys are deleted from this browser. You can restore it any time with your recovery phrase, on any device. Without the phrase, it's gone.</p>
           <div className="checks"><button type="button" className="check" onClick={() => setSure(true)}><span className="box" /><span>I have my recovery phrase written down, and I understand this removes the wallet here.</span></button></div></>
-          : <PinPad title="Enter your PIN" subtitle="To remove this wallet from this device." error={error} waitUntil={waitUntil} onComplete={async pin => {
+          : <PasswordForm title="Enter your password" subtitle="To remove this wallet from this device." submitLabel="Remove wallet" error={error} waitUntil={waitUntil} onComplete={async pin => {
             try { await wallet.remove(pin); onRemoved(); } catch (e) { setError(message(e)); setWaitUntil(wallet.pinWaitUntil()); }
           }} />}
     </div>

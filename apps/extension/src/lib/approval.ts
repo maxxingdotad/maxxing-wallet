@@ -7,6 +7,8 @@ import * as wallet from "./wallet";
 import { encode, decode } from "./codec";
 import { ERRORS, type Pending, type TabAnswer } from "./protocol";
 import { activity, declines, grantedTo, sites, trustedLookalikes } from "./store";
+import { evmNetwork } from "./chains";
+import { approvalsInPermit, approvalInTransaction, approvals } from "./approvals";
 
 export async function loadPending(id: string): Promise<Pending | null> {
   return ((await chrome.storage.session.get(`pending:${id}`))[`pending:${id}`] as Pending | undefined) ?? null;
@@ -60,6 +62,22 @@ export async function approveConnect(pending: Pending) {
   await answer(pending, { ok: true, result: { evm: open.evm, solana: open.solana } });
 }
 
+/** The network a switch request asks for, from the registry; null if it isn't one. */
+export function switchTarget(pending: Pending) {
+  const chainId = Number((decode(pending.params) as { chainId?: unknown } | null)?.chainId);
+  return Number.isSafeInteger(chainId) ? evmNetwork(chainId) : null;
+}
+
+/** Moves the site to the network it asked for, and keeps that for the site. */
+export async function approveSwitch(pending: Pending) {
+  const network = switchTarget(pending);
+  if (!network?.evmChainId) { await answer(pending, { ok: false, error: ERRORS.unknownChain }); return; }
+  if (!(await sites.get(pending.origin))) { await answer(pending, { ok: false, error: ERRORS.unauthorized }); return; }
+  await sites.setChain(pending.origin, network.evmChainId);
+  await activity.add({ kind: "connect", text: `Switched the site to ${network.name}`, site: pending.origin, networkId: network.networkId });
+  await answer(pending, { ok: true, result: null });
+}
+
 /** The review of a signing request, or why it can't be signed. A site signs only for the account it was connected with. */
 export async function reviewSign(pending: Pending) {
   const open = wallet.snapshot().public;
@@ -73,7 +91,12 @@ export async function reviewSign(pending: Pending) {
 export async function approveSign(pending: Pending, reviewed: { view: { title: string }; signed: unknown }) {
   if (!grantedTo(await sites.get(pending.origin), wallet.snapshot().public)) { await answer(pending, { ok: false, error: ERRORS.otherAccount }); return; }
   const method = pending.method as Exclude<Pending["method"], "connect">;
-  const result = await wallet.sign(method, decode(pending.params) as any, reviewed.signed);
+  const params = decode(pending.params) as any;
+  const result = await wallet.sign(method, params, reviewed.signed);
+  // An approval (a token allowance, a permit, access to a collection) is noted so the Approvals screen can show and revoke it.
+  const given = method === "evm.signTransaction" ? [approvalInTransaction(Number(params?.transaction?.chainId), params?.transaction ?? {})].filter(x => !!x)
+    : method === "evm.signTypedData" ? approvalsInPermit(params?.typedData) : [];
+  for (const g of given) await approvals.note({ ...g!, origin: pending.origin });
   if (pending.passedLookalikeWarning) await trustedLookalikes.add(pending.origin);
   await sites.touch(pending.origin);
   await activity.add({ kind: "sign", text: reviewed.view.title, site: pending.origin });

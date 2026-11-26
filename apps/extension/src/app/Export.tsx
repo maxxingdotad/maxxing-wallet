@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Check, Clock3, Copy, EyeOff, KeyRound } from "lucide-react";
 import { Steps } from "../ui/parts";
-import { PageHead, PinPad, canClearClipboard, copy, message } from "./kit";
+import { PageHead, PasswordForm, canClearClipboard, copy, message } from "./kit";
 import * as wallet from "../lib/wallet";
 
 const HIDE_AFTER = 60;
@@ -80,11 +80,11 @@ export function ExportFlow({ kind, onClose }: { kind: "phrase" | "keys"; onClose
         </button>)}
       </div>
     </div>
-    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><button type="button" className="btn danger" disabled={!ticks.every(Boolean)} onClick={() => setStep("pin")}>Continue to PIN</button></div>
+    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><button type="button" className="btn danger" disabled={!ticks.every(Boolean)} onClick={() => setStep("pin")}>Continue</button></div>
   </div>;
   if (step === "pin" || !secret) return <div className="popup"><div className="backdrop" />
     <PageHead title={title} onBack={() => setStep("warn")} />
-    <div className="scroll"><Steps at={2} of={3} /><PinPad title="Enter your PIN" subtitle={kind === "phrase" ? "To show your recovery phrase." : "To show your private keys."} error={error} waitUntil={waitUntil} onComplete={async pin => {
+    <div className="scroll"><Steps at={2} of={3} /><PasswordForm title="Enter your password" subtitle={kind === "phrase" ? "To show your recovery phrase." : "To show your private keys."} submitLabel="Continue" error={error} waitUntil={waitUntil} onComplete={async pin => {
       try {
         setError("");
         if (kind === "phrase") setSecret({ words: (await wallet.revealPhrase(pin)).split(" ") });

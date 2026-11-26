@@ -37,7 +37,7 @@ export function Avatar({ account, large }: { account: Pick<Account, "name" | "co
  * The portfolio as an orbit: the total in the middle, each chain a planet on the ring, sized by its share. The ring turns slowly;
  * with reduced motion it stands still.
  */
-export function Orbit({ total, change, shares, note }: { total: number; change: number | null; shares: { chain: ChainMark; usd: number }[]; note?: string }) {
+export function Orbit({ total, change, shares, note, hidden }: { total: number; change: number | null; shares: { chain: ChainMark; usd: number }[]; note?: string; /** Balances hidden (Settings): the total shows as dots. */ hidden?: boolean }) {
   const id = useId().replace(/[^a-z0-9]/gi, "");
   const [whole, cents] = usd(total).split(".");
   // With nothing priced yet, every chain gets an equal place on the ring.
@@ -76,7 +76,7 @@ export function Orbit({ total, change, shares, note }: { total: number; change: 
     </svg>
     <div className="orbit-center">
       <small>One balance · {shares.length} chains</small>
-      <div className="balance num">{whole}<span className="cents">.{cents}</span></div>
+      <div className="balance num" data-testid="total">{hidden ? "$••••" : <>{whole}<span className="cents">.{cents}</span></>}</div>
       {change !== null
         ? <span className={`delta ${change >= 0 ? "up" : "down"}`}>{change >= 0 ? "▲" : "▼"} {Math.abs(change).toFixed(2)}% today</span>
         : note ? <span className="delta" style={{ color: "var(--muted)", background: "var(--surface-2)" }}>{note}</span> : null}

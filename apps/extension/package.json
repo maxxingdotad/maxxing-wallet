@@ -19,10 +19,12 @@
   "dependencies": {
     "@maxxing/wallet-core": "workspace:*",
     "@maxxing/wallet-sdk": "workspace:*",
+    "@web3icons/react": "4.1.22",
     "bs58": "6.0.0",
     "lucide-react": "0.544.0",
     "react": "19.1.1",
     "react-dom": "19.1.1",
+    "uqr": "0.1.2",
     "viem": "2.37.3"
   },
   "devDependencies": {

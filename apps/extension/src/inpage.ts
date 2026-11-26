@@ -31,7 +31,11 @@ window.addEventListener("message", event => {
   if (!data || data.channel !== PAGE_CHANNEL || data.dir !== "to-page") return;
   if ("event" in data) {
     const c = data.connection;
-    store.set(c && /^0x[0-9a-fA-F]{40}$/.test(c.evm) ? { evm: c.evm as `0x${string}`, solana: c.solana } : null);
+    const next = c && /^0x[0-9a-fA-F]{40}$/.test(c.evm) ? { evm: c.evm as `0x${string}`, solana: c.solana } : null;
+    const now = store.connection;
+    if (!next !== !now || (next && now && (next.evm.toLowerCase() !== now.evm.toLowerCase() || next.solana !== now.solana))) store.set(next);
+    // The network the wallet keeps for this site (chosen in the wallet, or approved there): the provider moves to it.
+    if (next && typeof c?.chainId === "number" && c.chainId !== ethereum.network.chainId) void switchHere(c.chainId).catch(() => {});
     return;
   }
   const entry = waiting.get(data.id);
@@ -41,10 +45,25 @@ window.addEventListener("message", event => {
   else entry.reject(Object.assign(new Error(data.error.message), { code: data.error.code ?? 4001 }));
 });
 
-const transport = new ExtensionTransport() as never;
+const pageTransport = new ExtensionTransport();
+const transport = pageTransport as never;
 const evmChains = SDK_CHAINS.filter(chain => chain.family === "EVM" && chain.evmChainId != null).map(chain => chain.evmChainId!);
 const networks = networksFor({ chains: evmChains });
 const ethereum = new MaxxingEthereumProvider(transport, store as never, networks, networks.find(n => !n.testnet)?.chainId ?? networks[0]!.chainId);
+// Switching networks: the page's provider switches only after the wallet agrees. A connected site's network is kept per site in
+// the wallet, and changing it asks the user; a site that isn't connected switches on its own (nothing is at stake).
+const local = ethereum.request.bind(ethereum);
+const switchHere = (chainId: number) => local({ method: "wallet_switchEthereumChain", params: [{ chainId: `0x${chainId.toString(16)}` }] });
+ethereum.request = async args => {
+  if (args?.method !== "wallet_switchEthereumChain" && args?.method !== "wallet_addEthereumChain") return local(args);
+  const first = (Array.isArray(args.params) ? args.params[0] : args.params) as { chainId?: unknown } | undefined;
+  let chainId: number;
+  try { chainId = Number(BigInt(String(first?.chainId))); } catch { return local(args); } // the provider answers the bad input
+  if (!networks.some(n => n.chainId === chainId)) return local(args); // and an unknown network (4902)
+  if (chainId === ethereum.network.chainId) return null;
+  await pageTransport.request("evm.switchChain", { chainId });
+  return switchHere(chainId);
+};
 const solana = new MaxxingSolanaWallet(transport, store as never, SDK_CHAINS.filter(chain => chain.family === "SOLANA").map(chain => chain.networkId));
 
 announceProvider(ethereum);

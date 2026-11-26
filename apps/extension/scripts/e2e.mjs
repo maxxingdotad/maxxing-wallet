@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * End-to-end: the built extension (dist/chrome) in a real Chrome, driven over the DevTools protocol the way a person would use it.
- * Onboards a new wallet (PIN, recovery phrase behind hold-to-reveal, two-word check), adds an account, then a local test site
+ * Onboards a new wallet (password, recovery phrase behind hold-to-reveal, two-word check), adds an account, then a local test site
  * connects over EVM (EIP-6963) and Solana (Wallet Standard) and asks for signatures: a message and a Base Sepolia transaction, a
  * Solana message and a Solana transaction. Every signature is verified here. Screenshots of each screen go to the folder given.
  *
@@ -34,7 +34,7 @@ cpSync(resolve(here, "dist/chrome"), dist, { recursive: true });
 const shots = resolve(process.argv[2] ?? join(tmpdir(), "maxxing-extension-e2e"));
 mkdirSync(shots, { recursive: true });
 const CHROME = process.env.CHROME ?? (process.platform === "win32" ? "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe" : process.platform === "darwin" ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" : "google-chrome");
-const PORT = 8086, PIN = "246810";
+const PORT = 8086, PASSWORD = "Orbit-Hat-2046"; // letters and digits: the one password isn't limited to a PIN
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const results = [];
 const check = (name, ok, detail = "") => { results.push({ name, ok, detail }); console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? `  (${detail})` : ""}`); };
@@ -64,6 +64,12 @@ const send = (method, params = {}, sessionId) => new Promise((resolve, reject) =
 async function attach(targetId, size) {
   const { sessionId } = await send("Target.attachToTarget", { targetId, flatten: true });
   await send("Runtime.enable", {}, sessionId);
+  // A page's uncaught errors and console errors are printed, so a failing step shows its cause.
+  listeners.push(message => {
+    if (message.sessionId !== sessionId) return;
+    if (message.method === "Runtime.exceptionThrown") console.log(`PAGE ERROR ${message.params.exceptionDetails.exception?.description ?? message.params.exceptionDetails.text}`.slice(0, 600));
+    if (message.method === "Runtime.consoleAPICalled" && message.params.type === "error") console.log(`PAGE CONSOLE ${message.params.args.map(a => a.value ?? a.description ?? "").join(" ")}`.slice(0, 600));
+  });
   if (size) await send("Emulation.setDeviceMetricsOverride", { width: size[0], height: size[1], deviceScaleFactor: 2, mobile: false }, sessionId);
   const evaluate = async (expression) => { const r = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }, sessionId); if (r.exceptionDetails) throw new Error(r.exceptionDetails.exception?.description ?? r.exceptionDetails.text); return r.result.value; };
   const waitFor = async (expression, timeout = 20000) => {
@@ -75,12 +81,36 @@ async function attach(targetId, size) {
     throw new Error(`Timed out waiting for: ${expression}\n--- page shows ---\n${text}`);
   };
   // Past the approve buttons' arming delay (750 ms), so screenshots show them as the user can use them.
-  const shot = async (name) => { await sleep(1000); const { data } = await send("Page.captureScreenshot", { format: "png" }, sessionId); writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64")); };
+  // The tab is brought to the front first (Chrome holds back frames in a background tab, and a capture can wait for one forever);
+  // a capture that fails or takes over 15 s is tried again, and one that still fails is noted, never failing the run.
+  const shot = async (name) => {
+    await sleep(1000);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await send("Target.activateTarget", { targetId }).catch(() => {});
+        const { data } = await Promise.race([send("Page.captureScreenshot", { format: "png" }, sessionId), sleep(15_000).then(() => { throw new Error("no frame within 15 s"); })]);
+        writeFileSync(join(shots, `${name}.png`), Buffer.from(data, "base64"));
+        return;
+      }
+      catch (error) { if (attempt === 3) console.log(`NOTE  screenshot ${name} not captured: ${error.message}`); else await sleep(700); }
+    }
+  };
   const click = (text) => evaluate(`(() => { const b = [...document.querySelectorAll("button")].find(b => b.textContent.trim().startsWith(${JSON.stringify(text)}) && !b.disabled); if (!b) return false; b.click(); return true; })()`);
   const clickWhenReady = async (text, timeout) => { await waitFor(`[...document.querySelectorAll("button")].some(b => b.textContent.trim().startsWith(${JSON.stringify(text)}) && !b.disabled)`, timeout); await click(text); };
-  const typePin = async (pin) => { for (const d of pin) { await clickWhenReady(d); await sleep(40); } };
+  // The password: typed (through Chrome's input) into every field of the form on screen, then Enter submits it.
+  const typePassword = async (password) => {
+    await waitFor(`document.querySelectorAll(".pw-form .pw-input:not(:disabled)").length > 0`);
+    const fields = await evaluate(`document.querySelectorAll(".pw-form .pw-input").length`);
+    for (let i = 0; i < fields; i++) {
+      await evaluate(`document.querySelectorAll(".pw-form .pw-input")[${i}].focus()`);
+      await send("Input.insertText", { text: password }, sessionId);
+    }
+    await waitFor(`!document.querySelector(".pw-form button[type=submit]").disabled`);
+    await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" }, sessionId);
+    await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 }, sessionId);
+  };
   const setInput = (selector, value) => evaluate(`(() => { const el = document.querySelector(${JSON.stringify(selector)}); const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value").set; setter.call(el, ${JSON.stringify(value)}); el.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
-  return { sessionId, evaluate, waitFor, shot, click, clickWhenReady, typePin, setInput };
+  return { sessionId, evaluate, waitFor, shot, click, clickWhenReady, typePassword, setInput };
 }
 
 /**
@@ -103,10 +133,24 @@ const DEMO = {
     ["solana:mainnet", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", false, "USDC", "USD Coin", "210000000", 6, "210.00"],
   ],
 };
+/**
+ * Store screenshots only: Base's public endpoints answer a send's reads (nonce, gas, fees) with ordinary values, so the Send review
+ * screen can be shown for the sample balance (which isn't on chain). Nothing is signed or sent in a store run.
+ */
+const DEMO_RPC = { eth_chainId: "0x2105", eth_getTransactionCount: "0x5", eth_estimateGas: "0xfde8", eth_getBlockByNumber: { baseFeePerGas: "0x989680" }, eth_maxPriorityFeePerGas: "0xf4240", eth_gasPrice: "0x1312d00", eth_blockNumber: "0x1" };
+const BASE_RPCS = ["https://mainnet.base.org/*", "https://base-rpc.publicnode.com/*", "https://public.1rpc.io/base*", "https://base.drpc.org/*"];
 async function demoBalances(sessionId) {
-  await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }] }, sessionId);
+  await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }, ...BASE_RPCS.map(urlPattern => ({ urlPattern, requestStage: "Request" }))] }, sessionId);
   listeners.push(message => {
     if (message.method !== "Fetch.requestPaused" || message.sessionId !== sessionId) return;
+    if (!message.params.request.url.startsWith("https://api.maxxing.ad/")) {
+      if (message.params.request.method !== "POST") { void send("Fetch.continueRequest", { requestId: message.params.requestId }, sessionId); return; }
+      const body = JSON.parse(message.params.request.postData ?? "{}");
+      const answer = (one) => ({ jsonrpc: "2.0", id: one.id, result: DEMO_RPC[one.method] ?? null });
+      const reply = Array.isArray(body) ? body.map(answer) : answer(body);
+      void send("Fetch.fulfillRequest", { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }, { name: "access-control-allow-origin", value: "*" }], body: Buffer.from(JSON.stringify(reply)).toString("base64") }, sessionId);
+      return;
+    }
     const address = decodeURIComponent(message.params.request.url.split("/wallets/")[1].split("/")[0]);
     const rows = address.startsWith("0x") ? DEMO.evm : DEMO.solana;
     const items = rows.map(([chainId, token, native, symbol, name, balanceRaw, decimals, valueUsd]) => ({ chainId, address: token, native, symbol, name, imageUrl: null, balanceRaw, decimals, valueUsd }));
@@ -140,11 +184,17 @@ try {
   await sleep(1800); // let the welcome animation settle
   await popup.shot("01-welcome");
   await popup.click("Create a new wallet");
-  await popup.waitFor(`document.body.innerText.includes("Create a PIN")`);
+  await popup.waitFor(`document.body.innerText.includes("Create your password")`);
   await popup.shot("02-create-pin");
-  await popup.typePin(PIN);
-  await popup.waitFor(`document.body.innerText.includes("Enter it again")`);
-  await popup.typePin(PIN);
+  // Too easy a password is refused as you type, with the reason; the button stays off.
+  await popup.waitFor(`!!document.querySelector('[aria-label="New password"]')`);
+  await popup.evaluate(`document.querySelector('[aria-label="New password"]').focus()`);
+  await send("Input.insertText", { text: "password" }, popup.sessionId);
+  const weakShown = await popup.evaluate(`document.getElementById("pw-rule").textContent`);
+  check("an easy password is refused as you type, with the reason", /most used/.test(weakShown) && await popup.evaluate(`document.querySelector(".pw-form button[type=submit]").disabled`), weakShown);
+  await popup.evaluate(`(() => { const el = document.querySelector('[aria-label="New password"]'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, ""); el.dispatchEvent(new Event("input", { bubbles: true })); })()`);
+  await popup.shot("02b-create-password");
+  await popup.typePassword(PASSWORD);
   await popup.waitFor(`document.body.innerText.includes("Your wallet is ready")`, 60000);
   await popup.shot("03-wallet-ready");
   await popup.click("Back up now");
@@ -168,8 +218,146 @@ try {
   await popup.click("Open my wallet");
   await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
   check("onboarding creates a backed-up wallet and opens it", !(await popup.evaluate(`document.body.innerText.includes("Back up your recovery phrase")`)));
+  // The auto-lock counts only a person's own input; this run's scripted clicks don't count, and it lasts longer than the default
+  // 15 minutes. So it sets 1 hour first (a setting people use too); the 15-minute default itself is checked in the unit tests.
+  await popup.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
+  await popup.waitFor(`[...document.querySelectorAll(".seg button")].some(b => b.textContent === "1 h")`);
+  await popup.evaluate(`[...document.querySelectorAll(".seg button")].find(b => b.textContent === "1 h").click()`);
+  await popup.waitFor(`[...document.querySelectorAll(".seg button")].find(b => b.textContent === "1 h").classList.contains("on")`);
+  await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
   await popup.waitFor(`!document.body.innerText.includes("Reading balances")`, 60000).catch(() => {});
   await popup.shot("08-home");
+  // Home is never empty: each network's coin and stables show at 0, verified, with logos.
+  const defaultsShown = await popup.evaluate(`(() => { const rows = [...document.querySelectorAll('[data-testid="asset-list"] .asset-row')]; return { rows: rows.length, usdc: rows.some(r => r.textContent.includes("USDC")), svg: rows.filter(r => r.querySelector("svg")).length }; })()`);
+  check("Home shows default assets at 0 with logos", defaultsShown.rows >= 5 && defaultsShown.usdc && defaultsShown.svg >= 5, JSON.stringify(defaultsShown));
+  // The network selector: pick Base; Home follows it.
+  await popup.evaluate(`document.querySelector(".network-chip").click()`);
+  await popup.waitFor(`document.body.innerText.includes("All networks") && !!document.querySelector('[aria-label="Choose a network"]')`);
+  await popup.shot("08d-network-picker");
+  await popup.evaluate(`[...document.querySelectorAll('[aria-label="Choose a network"] .row')].find(r => r.querySelector("b")?.textContent === "Base").click()`);
+  await popup.waitFor(`document.querySelector(".network-chip")?.textContent.includes("Base") && document.querySelectorAll('[data-testid="asset-list"] .asset-row').length > 0`, 30000);
+  const onlyBase = await popup.evaluate(`[...document.querySelectorAll('[data-testid="asset-list"] .asset-row small')].every(s => s.textContent.endsWith("· Base"))`);
+  await popup.shot("08e-base-only");
+  check("the network selector filters Home to one network", onlyBase);
+  // A token's screen: price (or "No price yet"), the 24h/7d chart, holdings per network, Send/Receive/Swap.
+  await popup.evaluate(`[...document.querySelectorAll('[data-testid="asset-list"] .asset-row')].find(r => r.textContent.includes("USDC")).click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="token-detail"]') && !document.querySelector('[data-testid="token-detail"] .sk')`, 30000);
+  await popup.shot("08h-token-detail");
+  const detail = await popup.evaluate(`(() => { const d = document.querySelector('[data-testid="token-detail"]'); const t = d.innerText; return { send: t.includes("Send"), receive: t.includes("Receive"), swap: t.includes("Swap"), base: t.includes("Base"), price: /\\$[0-9]|No price yet/.test(t), chart: !!d.querySelector('[data-testid="price-chart"]') || t.includes("No chart yet") }; })()`);
+  check("a token opens its screen with price, chart, holdings per network and actions", Object.values(detail).every(Boolean), JSON.stringify(detail));
+  // Live: the MAXXING Data API answers the extension (its own id, from its chrome-extension:// origin) with USDC's price.
+  const livePrice = await popup.evaluate(`document.querySelector('[data-testid="token-detail"] .token-price')?.textContent ?? ""`);
+  // What Chrome actually sends to the API from an extension page (its Origin header), recorded from the network layer.
+  await send("Network.enable", {}, popup.sessionId);
+  const priceRequests = new Set(), sentHeaders = new Map();
+  listeners.push(message => {
+    if (message.sessionId !== popup.sessionId) return;
+    if (message.method === "Network.requestWillBeSent" && message.params.request.url.includes("api.maxxing.ad/v1/public/prices")) priceRequests.add(message.params.requestId);
+    if (message.method === "Network.requestWillBeSentExtraInfo") sentHeaders.set(message.params.requestId, message.params.headers);
+  });
+  const sentOrigin = () => { for (const id of priceRequests) { const h = sentHeaders.get(id); if (h) return h.origin ?? h.Origin ?? "(no Origin header)"; } return "(not seen)"; };
+  const priceProbe = /\$(0\.9\d|1\.0\d)/.test(livePrice) ? "" : await popup.evaluate(`fetch("https://api.maxxing.ad/v1/public/prices?ids=eip155:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", { headers: { "x-maxxing-app": "maxxing-extension" }, credentials: "omit", referrerPolicy: "no-referrer" }).then(async r => r.status + " " + (await r.text()).slice(0, 160), e => "fetch failed: " + e.message)`);
+  check("the Data API gives the extension a live price (USDC on Base about $1)", /\$(0\.9\d|1\.0\d)/.test(livePrice), `${livePrice} ${priceProbe}${priceProbe ? ` origin sent: ${sentOrigin()}` : ""}`);
+  await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "7d").click()`);
+  await popup.waitFor(`!document.querySelector('[data-testid="token-detail"] .sk')`, 30000);
+  if (STORE_DEMO) {
+    // Store screenshot: the Send review for the sample USDC (reads answered by the demo endpoints; nothing is signed or sent).
+    await popup.evaluate(`[...document.querySelectorAll('[data-testid="token-detail"] button.action')].find(b => b.textContent.includes("Send")).click()`);
+    await popup.waitFor(`!!document.querySelector('[data-testid="send-to"]')`, 30000);
+    await popup.setInput('[data-testid="send-to"]', "0x8ba1f109551bD432803012645Ac136ddd64DBA72");
+    await popup.setInput(".amount-input", "250");
+    await popup.clickWhenReady("Review");
+    await popup.waitFor(`document.body.innerText.includes("Confirm send")`, 45000);
+    await new Promise(r => setTimeout(r, 1500)); // the fee in dollars arrives a moment later
+    await popup.shot("08k-send-review");
+    await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+    await popup.waitFor(`!!document.querySelector('[data-testid="send-to"]')`);
+    await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  } else
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`!!document.querySelector(".network-chip")`, 30000);
+  await popup.evaluate(`document.querySelector(".network-chip").click()`);
+  await popup.waitFor(`!!document.querySelector('[aria-label="Choose a network"]')`);
+  await popup.evaluate(`[...document.querySelectorAll('[aria-label="Choose a network"] .row')][0].click()`);
+  await popup.waitFor(`document.querySelector(".network-chip")?.getAttribute("aria-label").includes("All networks")`, 30000);
+
+  // Receive: both addresses with QR codes; per network, its address with a "send only on" warning.
+  await popup.click("Receive");
+  await popup.waitFor(`document.querySelectorAll('[data-testid="address-qr"]').length === 2`);
+  await popup.shot("08f-receive-all");
+  await popup.evaluate(`document.querySelector('[data-testid="receive"]').closest(".popup").querySelector(".network-chip").click()`);
+  await popup.waitFor(`!!document.querySelector('[aria-label="Choose a network"]')`);
+  await popup.evaluate(`[...document.querySelectorAll('[aria-label="Choose a network"] .row')].find(r => r.querySelector("b")?.textContent === "Base").click()`);
+  await popup.waitFor(`document.body.innerText.includes("Send only on Base") && document.querySelectorAll('[data-testid="address-qr"]').length === 1`);
+  await popup.shot("08g-receive-base");
+  const receiveAddr = await popup.evaluate(`document.querySelector('[data-testid="receive-address"]').textContent`);
+  check("Receive shows the network's address with a QR code and a send-only-on warning", /^0x[0-9a-fA-F]{40}$/.test(receiveAddr), receiveAddr);
+  await popup.evaluate(`document.querySelector('[data-testid="receive"]').closest(".popup").querySelector(".network-chip").click()`);
+  await popup.waitFor(`!!document.querySelector('[aria-label="Choose a network"]')`);
+  await popup.evaluate(`[...document.querySelectorAll('[aria-label="Choose a network"] .row')][0].click()`);
+  await popup.waitFor(`document.querySelectorAll('[data-testid="address-qr"]').length === 2`);
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
+
+  // ── One password: a second wallet asks for no PIN; after a lock, the password opens every wallet ────────────────────────
+  await popup.evaluate(`document.querySelector(".account-pill").click()`);
+  await popup.waitFor(`document.body.innerText.includes("New wallet")`);
+  await popup.click("New wallet");
+  await popup.waitFor(`document.body.innerText.includes("no new PIN")`);
+  await popup.shot("08b-new-wallet-no-pin");
+  await popup.clickWhenReady("Create wallet");
+  await popup.waitFor(`document.body.innerText.includes("Your wallet is ready")`, 60000);
+  check("a second wallet is created without a new password", !(await popup.evaluate(`!!document.querySelector('[aria-label="Repeat it"]')`)));
+  await popup.click("Later");
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
+  await popup.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Lock now")`);
+  await popup.click("Lock now");
+  // The lock screen: the hat, one field (autofocused), Unlock off until there's input; a wrong password shows under the field.
+  await popup.waitFor(`!!document.querySelector('[data-testid="unlock"] .pw-input')`, 30000);
+  const lockScreen = await popup.evaluate(`(() => { const u = document.querySelector('[data-testid="unlock"]'); const b = u.querySelector('button[type=submit]'); return { title: u.innerText.includes("Unlock MAXXING Wallet"), hat: !!u.querySelector(".unlock-cap"), focused: document.activeElement === u.querySelector(".pw-input"), masked: u.querySelector(".pw-input").type === "password", off: b.disabled && b.textContent === "Unlock", keypad: !!u.querySelector(".keys") }; })()`);
+  check("the lock screen: hat, title, one masked autofocused field, Unlock off until typed, no keypad", lockScreen.title && lockScreen.hat && lockScreen.focused && lockScreen.masked && lockScreen.off && !lockScreen.keypad, JSON.stringify(lockScreen));
+  await popup.shot("08c-unlock");
+  await popup.typePassword("Wrong-Hat-0000");
+  await popup.waitFor(`/Wrong password/.test(document.getElementById("pw-note")?.textContent ?? "")`, 30000);
+  await popup.evaluate(`document.querySelector('.pw-eye').click()`);
+  await popup.click("Forgot password?");
+  await popup.waitFor(`!!document.querySelector('[data-testid="forgot-password"]')`);
+  await popup.shot("08c2-unlock-wrong-and-forgot");
+  const forgot = await popup.evaluate(`document.querySelector('[data-testid="forgot-password"]').innerText`);
+  check("a wrong password shows under the field; Forgot explains the phrase, warning about the wallet not backed up", /only protects MAXXING Wallet on this device/.test(forgot) && /isn't backed up/.test(forgot), forgot.slice(0, 200));
+  await popup.typePassword(PASSWORD);
+  await popup.waitFor(`!!document.querySelector('[aria-label="Home"]')`, 30000);
+  await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
+  // Switch to the first wallet: it opens at once, no PIN of its own.
+  await popup.evaluate(`document.querySelector(".account-pill").click()`);
+  await popup.waitFor(`document.body.innerText.includes("Other wallets on this device")`);
+  await popup.evaluate(`[...document.querySelectorAll(".sheet .row")].find(r => r.textContent.includes("My wallet") && r.textContent.includes("account"))?.click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens") && !document.querySelector(".sheet")`, 30000);
+  check("one password: after a lock, every wallet opens without its own PIN", !(await popup.evaluate(`document.body.innerText.includes("Enter your password") || document.body.innerText.includes("old PIN")`)));
+  // Activity: grouped by day with filters; the lock and unlock just made show under Security, and Transactions is empty.
+  await popup.evaluate(`document.querySelector('[aria-label="Activity"]').click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="activity"] .day-head')`, 30000);
+  await popup.shot("08i-activity");
+  await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Security").click()`);
+  const security = await popup.evaluate(`[...document.querySelectorAll('.activity-row')].map(r => r.dataset.kind)`);
+  await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "Transactions").click()`);
+  const txEmpty = await popup.evaluate(`document.querySelectorAll('.activity-row').length === 0 && document.body.innerText.includes("No transactions here yet")`);
+  check("Activity filters: Security shows the lock and unlock; Transactions is empty", security.includes("lock") && security.includes("unlock") && security.every(k => ["lock", "unlock", "export"].includes(k)) && txEmpty, JSON.stringify(security));
+  await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
+  // Send: a .eth name resolves on Ethereum (live, through the registry's endpoints) and the address is shown.
+  await popup.click("Send");
+  await popup.waitFor(`!!document.querySelector('[data-testid="send-to"]')`, 30000);
+  await popup.setInput('[data-testid="send-to"]', "vitalik.eth");
+  await popup.waitFor(`/→ 0x[0-9a-fA-F]{40}|no address/.test(document.querySelector('[data-testid="ens-result"]')?.textContent ?? "")`, 45000).catch(() => {});
+  await popup.shot("08j-send-ens");
+  const ensText = await popup.evaluate(`document.querySelector('[data-testid="ens-result"]')?.textContent ?? ""`);
+  check("Send resolves a .eth name and shows the address", /^vitalik\.eth → 0x[0-9a-fA-F]{40}$/.test(ensText), ensText);
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
 
   // ── Accounts ────────────────────────────────────────────────────────────────────────────────────────────────────────
   await popup.evaluate(`document.querySelector(".account-pill").click()`);
@@ -223,15 +411,28 @@ try {
   const signed = await site.waitFor(`window.results.sign && !window.results.sign.pending && window.results.sign`);
   check("EVM message signed by the connected address", signed.ok && (await recoverMessageAddress({ message: "Hello from the test dapp", signature: signed.value })).toLowerCase() === evm.toLowerCase());
 
-  await site.evaluate(`run("switch", window.found.evm.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x14a34" }] }))`);
-  await site.waitFor(`window.results.switch && !window.results.switch.pending`);
+  // The site's first network after connecting is taken without a prompt; the wallet keeps it for this site.
+  await site.evaluate(`run("switch", window.found.evm.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x2105" }] }))`);
+  const firstSwitch = await site.waitFor(`window.results.switch && !window.results.switch.pending && window.results.switch`);
+  check("a connected site's first network switch needs no prompt", firstSwitch.ok && await site.evaluate(`window.found.evm.request({ method: "eth_chainId" })`) === "0x2105", firstSwitch.error);
   await site.evaluate(`run("tx", window.found.evm.request({ method: "eth_signTransaction", params: [{ from: ${JSON.stringify(evm)}, to: ${JSON.stringify(evm)}, value: "0x0" }] }))`);
   approval = await nextApproval(seen);
-  await approval.waitFor(`document.body.innerText.includes("Base Sepolia")`, 30000);
+  await approval.waitFor(`document.body.innerText.includes("Base")`, 30000);
   await approval.shot("12-approve-transaction");
   await approval.clickWhenReady("Approve");
   const tx = await site.waitFor(`window.results.tx && !window.results.tx.pending && window.results.tx`, 30000);
-  check("Base Sepolia transaction signed by the connected address", tx.ok && (await recoverTransactionAddress({ serializedTransaction: tx.value })).toLowerCase() === evm.toLowerCase(), tx.ok ? "" : tx.error);
+  check("Base transaction signed (not sent) by the connected address", tx.ok && (await recoverTransactionAddress({ serializedTransaction: tx.value })).toLowerCase() === evm.toLowerCase(), tx.ok ? "" : tx.error);
+  // A test network while they're off: refused (4902). Another network: the wallet asks first.
+  await site.evaluate(`run("testnet", window.found.evm.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x14a34" }] }))`);
+  const testnet = await site.waitFor(`window.results.testnet && !window.results.testnet.pending && window.results.testnet`);
+  check("switching to a test network while they're off is refused (4902)", !testnet.ok && testnet.code === 4902, testnet.error);
+  await site.evaluate(`run("switch2", window.found.evm.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x1" }] }))`);
+  approval = await nextApproval(seen);
+  await approval.waitFor(`!!document.querySelector('[data-testid="switch-request"]')`);
+  await approval.shot("12b-approve-switch-network");
+  await approval.clickWhenReady("Switch network");
+  const switched = await site.waitFor(`window.results.switch2 && !window.results.switch2.pending && window.results.switch2`);
+  check("a connected site's network change is asked, approved, and applied", switched.ok && await site.evaluate(`window.found.evm.request({ method: "eth_chainId" })`) === "0x1", switched.error);
 
   await site.evaluate(`run("solConnect", window.found.solana.features["standard:connect"].connect().then(r => r.accounts[0].address))`);
   const solConnect = await site.waitFor(`window.results.solConnect && !window.results.solConnect.pending && window.results.solConnect`);
@@ -267,19 +468,46 @@ try {
   await popup.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
   await popup.waitFor(`document.body.innerText.includes("Connected sites")`);
   await popup.shot("15-settings");
-  check("the connected site is listed with a disconnect button", await popup.evaluate(`document.body.innerText.includes("localhost:${PORT}")`));
+  await popup.evaluate(`[...document.querySelectorAll("button.row")].find(b => b.textContent.includes("Connected sites")).click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="connected-sites"] .site-row')`);
+  await popup.shot("15b-connected-sites");
+  const siteRow = await popup.evaluate(`(() => { const r = document.querySelector('[data-testid="connected-sites"] .site-row'); return { host: r.innerText.includes("localhost:${PORT}"), network: r.querySelector("select").value, disconnect: !!r.querySelector('[aria-label^="Disconnect"]') }; })()`);
+  check("the connected site is listed with its network (kept per site) and a disconnect button", siteRow.host && siteRow.network === "1" && siteRow.disconnect, JSON.stringify(siteRow));
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Token approvals")`);
+  await popup.evaluate(`[...document.querySelectorAll("button.row")].find(b => b.textContent.includes("Token approvals")).click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="approvals"]') && !document.body.innerText.includes("Reading approvals")`, 60000);
+  await popup.shot("15c-approvals");
+  check("Approvals lists what's still open (none yet for a new wallet)", await popup.evaluate(`document.body.innerText.includes("No open approvals")`));
+  await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Export private keys")`);
+  // About: version, support, public source and the security policy. Then hide balances: Home shows dots.
+  await popup.evaluate(`document.querySelector('[data-testid="about"]').scrollIntoView()`);
+  await popup.shot("15d-settings-about");
+  const about = await popup.evaluate(`(() => { const t = document.querySelector('[data-testid="about"]').innerText; return { support: t.includes("Contact support"), source: t.includes("Public source code"), security: t.includes("Security policy"), version: /MAXXING Wallet \\d+\\.\\d+/.test(document.querySelector('[data-testid="version"]').textContent) }; })()`);
+  check("Settings shows the version, support, public source and security policy", Object.values(about).every(Boolean), JSON.stringify(about));
+  await popup.evaluate(`document.querySelector('[role="switch"][aria-label="Hide balances"]').click()`);
+  await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
+  await popup.waitFor(`!!document.querySelector('[data-testid="total"]')`, 30000);
+  await popup.shot("15e-home-hidden");
+  check("hide balances: the total shows as dots", await popup.evaluate(`document.querySelector('[data-testid="total"]').textContent === "$••••"`));
+  await popup.evaluate(`document.querySelector('[aria-label="Show balances"]').click()`);
+  await popup.evaluate(`document.querySelector('[aria-label="Settings"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Export private keys")`);
   await popup.click("Export private keys");
   await popup.waitFor(`document.querySelectorAll(".check").length === 3`);
   await popup.evaluate(`[...document.querySelectorAll(".check")].forEach(c => c.click())`);
   await popup.shot("16-export-warning");
-  await popup.clickWhenReady("Continue to PIN");
-  await popup.typePin(PIN);
+  await popup.clickWhenReady("Continue");
+  await popup.waitFor(`!!document.querySelector(".pw-form .pw-input")`);
+  await popup.shot("16b-export-password");
+  await popup.typePassword(PASSWORD);
   await popup.waitFor(`document.body.innerText.includes("Press and hold to reveal")`, 30000);
   await popup.evaluate(`document.querySelector(".hold").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`);
   await sleep(1800);
   await popup.waitFor(`document.body.innerText.includes("Hides again in")`);
   await popup.shot("17-export-keys-shown");
-  check("private key export: ticks, PIN, hold to reveal, auto-hide timer", true);
+  check("private key export: ticks, password, hold to reveal, auto-hide timer", true);
 
   // Copying a key: the background empties the clipboard later, even with the popup closed (alarm + offscreen document).
   await send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] }).catch(() => {});

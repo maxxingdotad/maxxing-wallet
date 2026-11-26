@@ -31,7 +31,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   const [error, setError] = useState(""), [reviewing, setReviewing] = useState(false);
   const [progress, setProgress] = useState(""), [done, setDone] = useState<{ hashes: string[]; state: string } | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null), [prepareError, setPrepareError] = useState("");
-  useEffect(() => { void settings.read().then(async s => { setAll(networks(s.showTestnets)); const p = await loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets); setHoldings(p.holdings.filter(h => h.raw && BigInt(h.raw) > 0n)); }); }, [account.evm, account.solana]);
+  useEffect(() => { void settings.read().then(async s => { setAll(networks(s.showTestnets)); const p = await loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets, s.network); /* pay from the selected network */ setHoldings(p.holdings.filter(h => h.raw && BigInt(h.raw) > 0n)); }); }, [account.evm, account.solana]);
 
   const fromAssets = useMemo(() => (holdings ?? []).filter(h => h.networkId?.startsWith("eip155:")).map(h => ({ holding: h, asset: { network: all.find(n => n.networkId === h.networkId)!, address: h.address ?? null, symbol: h.symbol, decimals: h.decimals ?? 18 } as Asset })).filter(x => x.asset.network), [holdings, all]);
   const toAssets = useMemo(() => all.flatMap(assetsOn), [all]);

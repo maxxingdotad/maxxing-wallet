@@ -224,6 +224,100 @@ test("a send's Activity entry is updated once its outcome is known", async () =>
   assert.ok(texts.includes("Confirmed on Base: 2 USDC · 0xbeef"));
 });
 
+test("activity: per account and network, filters, statuses (also read from older text-only entries)", async () => {
+  const { visibleActivity, statusOf } = await import("../src/app/Activity");
+  const me = { evm: "0xAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAaAa", solana: "So1anaMe11111111111111111111111111111111111" };
+  const other = "0xbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbBbB";
+  const items = [
+    { at: 6, kind: "send" as const, text: "Sent on Base: 1 USDC · 0x01", account: me.evm.toLowerCase(), networkId: "eip155:8453", hash: "0x01", status: "pending" as const },
+    { at: 5, kind: "send" as const, text: "Sent 1 SOL on Solana · sig", account: me.solana, networkId: "solana:mainnet", hash: "sig", status: "confirmed" as const },
+    { at: 4, kind: "send" as const, text: "Sent on Base: 2 USDC · 0x02", account: other, networkId: "eip155:8453", hash: "0x02", status: "failed" as const },
+    { at: 3, kind: "lock" as const, text: "Wallet locked" },
+    { at: 2, kind: "connect" as const, text: "Connected a site", site: "https://app.example" },
+    { at: 1, kind: "send" as const, text: "Confirmed on Base: 3 USDC · 0x03" },
+  ];
+  const ats = (xs: { at: number }[]) => xs.map(x => x.at);
+  assert.deepEqual(ats(visibleActivity(items, me, "all", "all")), [6, 5, 3, 2, 1], "another account's send is not shown");
+  assert.deepEqual(ats(visibleActivity(items, me, "eip155:8453", "all")), [6], "one network: only its transactions");
+  assert.deepEqual(ats(visibleActivity(items, me, "all", "tx")), [6, 5, 1]);
+  assert.deepEqual(ats(visibleActivity(items, me, "all", "sites")), [2]);
+  assert.deepEqual(ats(visibleActivity(items, me, "all", "security")), [3]);
+  assert.equal(statusOf(items[0]!), "pending");
+  assert.equal(statusOf(items[5]!), "confirmed", "older entries: status read from the text");
+  assert.equal(statusOf({ at: 0, kind: "send", text: "Not confirmed yet (check the explorer before sending again) on Base" }), "pending");
+  assert.equal(statusOf(items[3]!), null);
+});
+
+test("password guidance: the codes people guess first are refused with a reason; ordinary ones pass", async () => {
+  const { weakPassword } = await import("../src/lib/password");
+  // Digits only: 6 or more, no repeats, runs, patterns or the most used codes.
+  for (const weak of ["000000", "777777", "123456", "654321", "345678", "121212", "123123", "112233", "12345", "12345678", "1234567890", "45454545"]) assert.ok(weakPassword(weak), weak);
+  for (const fine of ["246810", "135790", "583014", "902817", "58301492"]) assert.equal(weakPassword(fine), null, fine);
+  // With letters: 8 or more characters, not one character repeated, not a repeated pattern, not a most used password.
+  for (const weak of ["hat2026", "aaaaaaaa", "Password", "qwerty123", "abcabcabc", "maxxing1", "x".repeat(129)]) assert.ok(weakPassword(weak), weak);
+  for (const fine of ["Orbit-Hat-2046", "correct horse battery", "kXr9!pq2", "Café-Hat 2026"]) assert.equal(weakPassword(fine), null, fine);
+});
+
+test("token prices: a native coin is priced as the registry's wrapped token; a token as itself; nothing answers as no price", async () => {
+  const { marketToken, price, chart } = await import("../src/lib/market");
+  const { wrappedNative, KNOWN_SOLANA_MINTS } = await import("@maxxing/wallet-core/chains");
+  const { shownNetworks } = await import("../src/lib/balances");
+  for (const n of shownNetworks(false).filter(n => n.networkId.startsWith("eip155:"))) assert.equal(marketToken(n.networkId, null), wrappedNative(n.networkId)?.toLowerCase() ?? null, n.name);
+  const sol = shownNetworks(false).find(n => n.networkId.startsWith("solana:"))!;
+  assert.equal(KNOWN_SOLANA_MINTS[marketToken(sol.networkId, null)!]?.symbol, "SOL", "a Solana mint keeps its case");
+  assert.equal(marketToken("eip155:8453", "0xABC"), "0xabc", "EVM addresses as the API names them: lowercase");
+  const real = globalThis.fetch;
+  globalThis.fetch = (async () => new Response("no", { status: 401 })) as typeof fetch;
+  try {
+    assert.deepEqual(await price("eip155:8453", null), { priceUsd: null, change24hPct: null }, "no answer is no price, never 0");
+    assert.deepEqual(await chart("eip155:8453", null, "7d"), []);
+  } finally { globalThis.fetch = real; }
+});
+
+test("networks and assets: the selector filters, defaults show at 0, the registry's tokens are verified, spam is hidden", async () => {
+  const { shownNetworks } = await import("../src/lib/balances");
+  const { defaultAssets, listAssets, trustOf, verifiedAssets, NO_PREFS, assetKey } = await import("../src/lib/assets");
+  const { networks } = await import("../src/lib/chains");
+  // Network filter: all enabled networks, or the one picked; test networks only when on.
+  const mainnets = shownNetworks(false);
+  assert.ok(mainnets.length > 5 && mainnets.every(n => !n.testnet));
+  assert.ok(shownNetworks(true).some(n => n.testnet));
+  assert.deepEqual(shownNetworks(false, "eip155:8453").map(n => n.networkId), ["eip155:8453"]);
+  assert.deepEqual(shownNetworks(false, "eip155:84532"), [], "a test network isn't shown while they're off");
+  // Defaults: every enabled network has its native coin; stables from the registry where it names them; never a duplicate.
+  const defaults = defaultAssets(mainnets);
+  for (const n of mainnets) assert.ok(defaults.some(a => a.networkId === n.networkId && a.address === null), `${n.name} has its native coin`);
+  const base = defaults.filter(a => a.networkId === "eip155:8453").map(a => a.symbol);
+  assert.ok(base.includes("ETH") && base.includes("USDC"));
+  assert.ok(!base.includes("BRETT"), "listed non-stable tokens aren't defaults");
+  const sol = defaults.filter(a => a.networkId === "solana:mainnet").map(a => a.symbol).sort();
+  assert.deepEqual(sol, ["SOL", "USDC", "USDT"]);
+  assert.equal(new Set(defaults.map(a => assetKey(a.networkId, a.address))).size, defaults.length);
+  // Home's list: defaults at 0, held ones with their data, only the selected network's.
+  const baseOnly = networks(false).filter(n => n.networkId === "eip155:8453");
+  const held = [
+    { networkId: "eip155:8453", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", symbol: "USDC", name: "USD Coin", decimals: 6, usd: 12 },
+    { networkId: "eip155:8453", address: "0x1111111111111111111111111111111111111111", symbol: "FROG", name: "Frog", decimals: 18, usd: 0 },
+    { networkId: "eip155:8453", address: "0x2222222222222222222222222222222222222222", symbol: "CLAIM", name: "Visit claim-rewards.xyz", decimals: 18, usd: 0 },
+    { networkId: "eip155:1", address: null, symbol: "ETH", name: "Ether", decimals: 18, usd: 50 },
+  ];
+  const list = listAssets(baseOnly, held, NO_PREFS);
+  assert.ok(list.every(a => a.ref.networkId === "eip155:8453"), "other networks' holdings are filtered out");
+  assert.equal(list.find(a => a.ref.symbol === "ETH")?.held, null, "Base ETH shows at 0");
+  assert.equal(list.find(a => a.ref.symbol === "USDC")?.held?.usd, 12);
+  assert.equal(list.find(a => a.ref.symbol === "USDC")?.trust, "verified");
+  assert.equal(list.find(a => a.ref.symbol === "FROG")?.trust, "unverified");
+  assert.equal(list.find(a => a.ref.symbol === "CLAIM"), undefined, "spam is hidden by default");
+  assert.equal(listAssets(baseOnly, held, { ...NO_PREFS, showSpam: true }).find(a => a.ref.symbol === "CLAIM")?.trust, "spam");
+  // Hidden by the user, and custom tokens added by address.
+  const hiddenUsdc = listAssets(baseOnly, held, { ...NO_PREFS, hidden: [assetKey("eip155:8453", "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913")] });
+  assert.equal(hiddenUsdc.find(a => a.ref.symbol === "USDC"), undefined);
+  const custom = listAssets(baseOnly, [], { ...NO_PREFS, custom: [{ networkId: "eip155:8453", address: "0x3333333333333333333333333333333333333333", symbol: "MINE", name: "MINE", decimals: 18 }] });
+  assert.equal(custom.find(a => a.ref.symbol === "MINE")?.custom, true);
+  // A token that pretends to be a registry one by name is still unverified (the address decides).
+  assert.equal(trustOf({ networkId: "eip155:8453", address: "0x4444444444444444444444444444444444444444", symbol: "USDC", name: "USD Coin" }, verifiedAssets(baseOnly)), "unverified");
+});
+
 test("blocklist refreshes only add hosts, never public suffixes, and a short download is refused", async () => {
   const { withoutSuffixes, refreshBlocklist, blocklist } = await import("../src/lib/blocklist");
   assert.deepEqual([...withoutSuffixes(["vercel.app", "drainer.vercel.app", "co.uk", "evil.co.uk", "com"], PSL)], ["drainer.vercel.app", "evil.co.uk"]);
@@ -315,9 +409,197 @@ test("a SOL transfer is built so the wallet core reads it back exactly: one tran
 
 test("address poisoning: a new address that starts and ends like one you paid is flagged", async () => {
   await store.kept.set("recipients", ["0xabcdef1111111111111111111111111111119999"]);
-  assert.deepEqual(await checkRecipient("0xabcdef1111111111111111111111111111119999"), { firstTime: false, lookalike: null });
+  assert.deepEqual(await checkRecipient("0xabcdef1111111111111111111111111111119999"), { firstTime: false, lookalike: null, contact: null });
   assert.equal((await checkRecipient("0xabcdef2222222222222222222222222222229999")).lookalike, "0xabcdef1111111111111111111111111111119999");
-  assert.deepEqual(await checkRecipient("0x9999999999999999999999999999999999999999"), { firstTime: true, lookalike: null });
+  assert.deepEqual(await checkRecipient("0x9999999999999999999999999999999999999999"), { firstTime: true, lookalike: null, contact: null });
+});
+
+test("address book: contacts by name, recents keep Solana's case, a contact's look-alike is flagged", async () => {
+  const { book } = await import("../src/lib/send");
+  await store.kept.set("contacts", []);
+  const evm = "0x1234561111111111111111111111111111115678", sol = "7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  await assert.rejects(book.saveContact({ address: evm, family: "EVM", name: "  " }), /name/);
+  await assert.rejects(book.saveContact({ address: "nope", family: "EVM", name: "Bad" }), /isn't valid/);
+  await book.saveContact({ address: evm, family: "EVM", name: "Alex" });
+  await book.saveContact({ address: sol, family: "SOLANA", name: "Sam" });
+  await book.saveContact({ address: evm.toUpperCase().replace("0X", "0x"), family: "EVM", name: "Alex 2" }); // same address, any case: replaced
+  assert.deepEqual((await book.contacts()).map(c => c.name), ["Alex 2", "Sam"]);
+  assert.deepEqual(await checkRecipient(evm), { firstTime: false, lookalike: null, contact: "Alex 2" }, "a contact isn't a first-time recipient");
+  assert.equal((await checkRecipient("0x1234569999999999999999999999999999995678")).lookalike, evm.toLowerCase(), "looks like a contact");
+  assert.equal((await book.contacts()).find(c => c.family === "SOLANA")!.address, sol, "Solana addresses keep their case");
+  await book.removeContact(sol);
+  assert.deepEqual((await book.contacts()).map(c => c.name), ["Alex 2"]);
+});
+
+test("send max keeps the real fee: a draft's gas × max fee, plus the L1 data fee on OP-stack chains; SOL empties to exactly 0", async () => {
+  const { maxSendable } = await import("../src/lib/send");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const all = networks(true), base = all.find(n => n.networkId === "eip155:8453")!, eth = all.find(n => n.networkId === "eip155:1")!, sol = all.find(n => n.networkId === "solana:mainnet")!;
+  assert.equal(base.l1FeeOracle, "0x420000000000000000000000000000000000000F", "the oracle comes from the registry");
+  assert.equal(eth.l1FeeOracle, undefined);
+  const FROM = "0x1111111111111111111111111111111111111111";
+  const calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { method, params } = JSON.parse(String(init?.body));
+    calls.push(method === "eth_call" ? `eth_call:${params[0].to}` : method);
+    const result = ({ eth_getBlockByNumber: { baseFeePerGas: "0x3b9aca00" }, eth_maxPriorityFeePerGas: "0x0", eth_getTransactionCount: "0x0", eth_estimateGas: "0x5208",
+      eth_call: `0x${(10n ** 12n).toString(16)}` } as Record<string, unknown>)[method] ?? null; // 1 gwei base, no tip, 21000 gas, L1 fee 0.000001 ETH
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  try {
+    // The draft: gas 21000 × 1.2 = 25200 at a max fee of 2 gwei = 0.0000504 ETH; with a quarter more headroom, 0.000063 ETH.
+    assert.deepEqual(await maxSendable(eth, { raw: String(10n ** 18n), address: null, decimals: 18 }, FROM), { amount: "0.999937", keep: 63_000_000_000_000n });
+    assert.ok(!calls.some(c => c.startsWith("eth_call")), "no L1 fee off the OP stack");
+    // Base adds 1.5 × its L1 data fee, read from the oracle: (0.0000504 + 0.0000015) × 1.25.
+    calls.length = 0;
+    assert.deepEqual(await maxSendable(base, { raw: String(10n ** 18n), address: null, decimals: 18 }, FROM), { amount: "0.999935125", keep: 64_875_000_000_000n });
+    assert.ok(calls.includes("eth_call:0x420000000000000000000000000000000000000F"));
+    assert.deepEqual(await maxSendable(base, { raw: "1000", address: null, decimals: 18 }, FROM), { amount: "0", keep: 64_875_000_000_000n }, "never below zero");
+    assert.deepEqual(await maxSendable(base, { raw: "2500000", address: "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", decimals: 6 }, FROM), { amount: "2.5", keep: 0n }, "a token sends all");
+    assert.deepEqual(await maxSendable(sol, { raw: "1000000000", address: null, decimals: 9 }, "x"), { amount: "0.999995", keep: 5_000n }, "SOL: all but the fee, the account ends at 0");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});
+
+test("Max at review: a base fee that rose after Max was pressed is covered, from the review draft's own fee", async () => {
+  const { maxSendable, draftEvmMaxSend, maxFeeOf } = await import("../src/lib/send");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const base = networks(false).find(n => n.networkId === "eip155:8453")!;
+  const FROM = "0x1111111111111111111111111111111111111111", TO = "0x2222222222222222222222222222222222222222", balance = 10n ** 18n;
+  let baseFee = 1_000_000_000n;
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { method } = JSON.parse(String(init?.body));
+    const result = ({ eth_getBlockByNumber: { baseFeePerGas: `0x${baseFee.toString(16)}` }, eth_maxPriorityFeePerGas: "0x0", eth_getTransactionCount: "0x0", eth_estimateGas: "0x5208",
+      eth_call: `0x${(10n ** 12n).toString(16)}` } as Record<string, unknown>)[method] ?? null;
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  try {
+    const shown = await maxSendable(base, { raw: String(balance), address: null, decimals: 18 }, FROM, TO);
+    baseFee = 3_000_000_000n; // the network got busier before the user pressed Review
+    const draft = await draftEvmMaxSend({ network: base, from: FROM, to: TO, balance });
+    const tx = draft.transaction as { value?: bigint; gas?: bigint; maxFeePerGas?: bigint };
+    const fee = maxFeeOf(tx), l1 = 10n ** 12n;
+    assert.equal(tx.maxFeePerGas, 6_000_000_000n, "the review draft's fee is today's");
+    assert.equal(tx.value, balance - (fee + l1 * 3n / 2n) * 5n / 4n, "value = balance − that draft's max fee and L1 fee, with headroom");
+    assert.ok(tx.value! + fee + l1 <= balance, "what it can cost fits the balance");
+    assert.ok(tx.value! < BigInt(Math.round(Number(shown.amount) * 1e18)), "less than shown when fees were lower");
+    assert.equal(draft.kind, "send");
+    baseFee = 10n ** 16n; // fees above the whole balance
+    await assert.rejects(draftEvmMaxSend({ network: base, from: FROM, to: TO, balance }), /doesn't cover the network fee/);
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});
+
+test("SOL sends follow the rent rule: emptying to 0 is fine; leaving dust below the minimum, or funding a new address below it, is refused", async () => {
+  const { draftSolSend } = await import("../src/lib/send");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const sol = networks(false).find(n => n.networkId === "solana:mainnet")!;
+  const FROM = bs58.encode(new Uint8Array(32).fill(1)), TO = bs58.encode(new Uint8Array(32).fill(2));
+  let theirs = 5_000_000;
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { method, params } = JSON.parse(String(init?.body));
+    const result = method === "getBalance" ? { value: params[0] === FROM ? 1_000_000_000 : theirs } : method === "getMinimumBalanceForRentExemption" ? 890_880
+      : method === "getLatestBlockhash" ? { value: { blockhash: bs58.encode(new Uint8Array(32).fill(3)) } } : null;
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  try {
+    assert.equal((await draftSolSend({ network: sol, from: FROM, to: TO, amount: "0.999995" })).lamports, 999_995_000n, "Max: the account ends at exactly 0");
+    assert.equal((await draftSolSend({ network: sol, from: FROM, to: TO, amount: "0.5" })).lamports, 500_000_000n);
+    await assert.rejects(draftSolSend({ network: sol, from: FROM, to: TO, amount: "0.9995" }), /below Solana's minimum/, "leaves 0.000495 SOL");
+    await assert.rejects(draftSolSend({ network: sol, from: FROM, to: TO, amount: "1" }), /more than this account holds/);
+    theirs = 0;
+    await assert.rejects(draftSolSend({ network: sol, from: FROM, to: TO, amount: "0.0001" }), /must receive at least/, "a new address below the minimum");
+    assert.ok(await draftSolSend({ network: sol, from: FROM, to: TO, amount: "0.01" }));
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});
+
+test("approvals: noted from approve/permit/collection calls (not revokes), read live from chain, revoked with a zero approval", async () => {
+  const { approvalInTransaction, approvalsInPermit, approvals, readApprovals, revokeCall } = await import("../src/lib/approvals");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const { encodeFunctionData, parseAbi, decodeFunctionData, maxUint256 } = await import("viem");
+  const abi = parseAbi(["function approve(address,uint256)", "function setApprovalForAll(address,bool)", "function transfer(address,uint256)"]);
+  const USDC = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913", SPENDER = "0x1111111111111111111111111111111111111111", NFT = "0x2222222222222222222222222222222222222222";
+  assert.deepEqual(approvalInTransaction(8453, { to: USDC, data: encodeFunctionData({ abi, functionName: "approve", args: [SPENDER, 5n] }) }), { networkId: "eip155:8453", token: USDC, spender: SPENDER, kind: "token" });
+  assert.equal(approvalInTransaction(8453, { to: USDC, data: encodeFunctionData({ abi, functionName: "approve", args: [SPENDER, 0n] }) }), null, "a revoke isn't an approval");
+  assert.equal(approvalInTransaction(8453, { to: USDC, data: encodeFunctionData({ abi, functionName: "transfer", args: [SPENDER, 5n] }) }), null);
+  assert.equal(approvalInTransaction(8453, { to: NFT, data: encodeFunctionData({ abi, functionName: "setApprovalForAll", args: [SPENDER, true] }) })?.kind, "collection");
+  assert.equal(approvalInTransaction(999_999_999, { to: USDC, data: encodeFunctionData({ abi, functionName: "approve", args: [SPENDER, 5n] }) }), null, "unknown network");
+  assert.deepEqual(approvalsInPermit({ primaryType: "Permit", domain: { chainId: 8453, verifyingContract: USDC }, message: { spender: SPENDER, value: "100" } }), [{ networkId: "eip155:8453", token: USDC, spender: SPENDER, kind: "token" }]);
+  assert.deepEqual(approvalsInPermit({ primaryType: "Permit", domain: { chainId: 1, verifyingContract: NFT }, message: { holder: SPENDER, spender: SPENDER, allowed: true } })[0]?.kind, "token", "DAI-style permit: allowed");
+  assert.deepEqual(approvalsInPermit({ primaryType: "Permit", domain: { chainId: 1, verifyingContract: NFT }, message: { holder: SPENDER, spender: SPENDER, allowed: false } }), [], "allowed: false takes it back");
+  // Permit2: one token or a batch, each with its amount, for the spender; the allowance lives in Permit2.
+  const PERMIT2 = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+  assert.deepEqual(approvalsInPermit({ primaryType: "PermitSingle", domain: { chainId: 8453, verifyingContract: PERMIT2 }, message: { spender: SPENDER, details: { token: USDC, amount: "5" } } }),
+    [{ networkId: "eip155:8453", token: USDC, spender: SPENDER, kind: "permit2" }]);
+  assert.equal(approvalsInPermit({ primaryType: "PermitBatch", domain: { chainId: 8453, verifyingContract: PERMIT2 }, message: { spender: SPENDER, details: [{ token: USDC, amount: "5" }, { token: NFT, amount: "0" }] } }).length, 1, "a zero amount gives nothing");
+  const p2abi = parseAbi(["function approve(address,address,uint160,uint48)"]);
+  assert.equal(approvalInTransaction(8453, { to: PERMIT2, data: encodeFunctionData({ abi: p2abi, functionName: "approve", args: [USDC, SPENDER, 5n, 9_999_999_999] }) })?.kind, "permit2");
+  assert.deepEqual(decodeFunctionData({ abi: p2abi, data: revokeCall({ token: USDC, spender: SPENDER, kind: "permit2" }).data }).args, [USDC, SPENDER, 0n, 0]);
+  assert.equal(revokeCall({ token: USDC, spender: SPENDER, kind: "permit2" }).to, PERMIT2);
+  assert.deepEqual(approvalsInPermit({ primaryType: "Mail", domain: {}, message: {} }), []);
+
+  await store.kept.set("approvals", []);
+  await approvals.note({ networkId: "eip155:8453", token: USDC.toLowerCase(), spender: SPENDER, kind: "token", origin: "https://app.example" });
+  await approvals.note({ networkId: "eip155:8453", token: USDC, spender: NFT, kind: "token" });
+  await approvals.note({ networkId: "eip155:8453", token: NFT, spender: SPENDER, kind: "collection" });
+  await approvals.note({ networkId: "eip155:8453", token: USDC, spender: SPENDER, kind: "token", origin: "https://again.example" }); // same one: moves up
+  assert.equal((await approvals.all()).length, 3);
+  // The chain says: USDC→SPENDER unlimited, USDC→NFT spent (0), the collection access still on.
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { params } = JSON.parse(String(init?.body));
+    const data: string = params[0].data;
+    const result = data.startsWith("0xdd62ed3e") ? (data.toLowerCase().includes(NFT.slice(2).toLowerCase()) ? "0x0" : `0x${maxUint256.toString(16)}`) : data.startsWith("0xe985e9c5") ? `0x${"0".repeat(63)}1` : "0x";
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  try {
+    const live = await readApprovals("0x3333333333333333333333333333333333333333", await approvals.all(), networks(false));
+    assert.deepEqual(live.map(a => [a.symbol, a.amount, a.kind, a.origin ?? null]).sort(), [["Collection", "All items", "collection", null], ["USDC", "Unlimited", "token", "https://again.example"]].sort());
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+  // Permit2: read from Permit2 itself; an expired allowance is gone.
+  const { encodeAbiParameters } = await import("viem");
+  const now = 1_800_000_000_000;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { params } = JSON.parse(String(init?.body));
+    const toUsdc = params[0].data.toLowerCase().includes(USDC.slice(2).toLowerCase());
+    const result = encodeAbiParameters([{ type: "uint160" }, { type: "uint48" }, { type: "uint48" }], [5_000_000n, toUsdc ? now / 1000 + 3600 : now / 1000 - 1, 0]);
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }));
+  }) as typeof fetch;
+  RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  try {
+    const p2 = [{ networkId: "eip155:8453", token: USDC, spender: SPENDER, kind: "permit2" as const, at: 0 }, { networkId: "eip155:8453", token: NFT, spender: SPENDER, kind: "permit2" as const, at: 0 }];
+    const live = await readApprovals("0x3333333333333333333333333333333333333333", p2, networks(false), now);
+    assert.deepEqual(live.map(a => [a.symbol, a.amount, a.verified]), [["USDC", "5 USDC", true]], "the expired one is left out");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+  const revoke = revokeCall({ token: USDC, spender: SPENDER, kind: "token" });
+  assert.equal(revoke.to, USDC);
+  assert.deepEqual(decodeFunctionData({ abi, data: revoke.data }).args, [SPENDER, 0n]);
+  assert.deepEqual(decodeFunctionData({ abi, data: revokeCall({ token: NFT, spender: SPENDER, kind: "collection" }).data }).args, [SPENDER, false]);
+});
+
+test("ENS: only .eth names; invalid names don't resolve; no network answer is no address", async () => {
+  const { isEnsName, resolveEns } = await import("../src/lib/ens");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  assert.ok(isEnsName("vitalik.eth") && isEnsName("pay.alex.eth"));
+  assert.ok(!isEnsName("alex.xyz") && !isEnsName("0x1234") && !isEnsName(".eth") && !isEnsName("a b.eth"));
+  const real = globalThis.fetch, waits = [...RETRY_WAITS_MS];
+  RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  let calls = 0;
+  globalThis.fetch = (async () => { calls++; return new Response("", { status: 503 }); }) as typeof fetch;
+  try {
+    assert.equal(await resolveEns("not-a-name"), null);
+    assert.equal(calls, 0, "nothing is asked for a non-name");
+    assert.equal(await resolveEns("alex.eth"), null, "no answer: no address, never a guess");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
 });
 
 test("site requests are reviewed by the core and signed as shown; a Solana 'message' that is a transaction is refused", async () => {

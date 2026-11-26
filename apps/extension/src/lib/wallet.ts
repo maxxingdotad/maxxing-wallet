@@ -9,7 +9,7 @@ import * as vault from "@maxxing/wallet-core/vault";
 import * as signing from "@maxxing/wallet-core/signing";
 import { isSolanaTransactionMessage, parseSolanaTransaction, signSolanaTransaction } from "@maxxing/wallet-core/solana-tx";
 import { approvalView, type ApprovalView, type SigningMethod } from "@maxxing/wallet-core/request-view";
-import { account, activity, lastActive } from "./store";
+import { account, activity, kept, lastActive } from "./store";
 import type { SiteMethod } from "./protocol";
 
 export type WalletSnapshot = { accounts: vault.WalletSummary[]; activeId: string | null; unlocked: boolean; public: { evm: string; solana: string } | null; storageError: string | null };
@@ -42,6 +42,7 @@ export async function start(): Promise<WalletSnapshot> {
   if (!started) {
     started = true;
     vault.setWalletPublishing(false);
+    vault.useKeyring(true); // one password for the whole extension: every wallet and account sits behind it
     vault.startWalletProtection();
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "session" && changes.lockedAt?.newValue) void vault.signOutPlatformWallet().then(() => window.dispatchEvent(new Event("maxxing:wallet")));
@@ -58,9 +59,32 @@ async function opened(kind: "unlock" | "create" | "import") {
   await announce();
   if (kind === "unlock") await activity.add({ kind: "unlock", text: "Wallet unlocked" });
 }
-export async function unlock(pin: string) { await vault.unlockPlatformWallet(pin); await opened("unlock"); }
-export async function create(pin: string, label?: string) { await vault.createPlatformWallet(pin, label); await opened("create"); }
-export async function restore(phrase: string, pin: string, label?: string) { await vault.importPlatformWallet(phrase, pin, label); await opened("import"); }
+export async function unlock(pin: string) {
+  const before = vault.keyringExists();
+  await vault.unlockPlatformWallet(pin);
+  // This unlock turned an older wallet's PIN into the one password: Home then offers (once, optional) to choose a new one.
+  if (!before && vault.keyringExists()) await kept.set("offer-new-password", true);
+  await opened("unlock");
+}
+/** After the move to one password: whether to offer choosing a new one (the old PIN became the password). */
+export const newPasswordOffered = () => kept.get<boolean>("offer-new-password", false);
+export const dismissNewPasswordOffer = () => kept.set("offer-new-password", false);
+/** A new wallet. The password is needed only for the first wallet on this device (it sets the password); never a new one after. */
+export async function create(pin?: string, label?: string) { await vault.createPlatformWallet(pin, label); await opened("create"); }
+export async function restore(phrase: string, pin?: string, label?: string) { await vault.importPlatformWallet(phrase, pin, label); await opened("import"); }
+/** The password is set on this device (so adding a wallet needs no new PIN). */
+export const passwordSet = () => vault.keyringExists();
+/** Whether the password was entered in this browser session (the extension is unlocked). */
+export const passwordOpen = () => vault.keyringOpen();
+/** Wallets from before the one password, each needing its old PIN once. */
+export const needingOldPin = () => vault.walletsNeedingOldPin();
+/** Moves an older wallet behind the password, after its old PIN; then opens it if it's the active one. */
+export async function addOldWallet(id: string, oldPin: string) {
+  await vault.adoptPlatformWallet(id, oldPin);
+  await activity.add({ kind: "unlock", text: "An older wallet now opens with your password" });
+  if (vault.activePlatformWalletId() === id && !vault.platformWalletUnlocked()) await vault.restoreDeviceSession();
+  await announce();
+}
 export async function lock() { await vault.signOutPlatformWallet(); await announce(); await activity.add({ kind: "lock", text: "Wallet locked" }); }
 export async function select(id: string) { await vault.selectPlatformWallet(id); await announce(); }
 export const rename = (id: string, label: string) => vault.renamePlatformWallet(id, label);
@@ -74,6 +98,14 @@ export const pinWaitUntil = () => vault.pinWaitUntil();
 /** Exports, each logged locally (the Activity list shows when and what, never the secret itself). */
 export async function revealPhrase(pin: string) { const phrase = await vault.revealPlatformMnemonic(pin); await activity.add({ kind: "export", text: "Recovery phrase shown" }); return phrase; }
 export async function revealKeys(pin: string) { const keys = await vault.revealPlatformPrivateKeys(pin); await activity.add({ kind: "export", text: "Private keys shown" }); return keys; }
+/** Checks the current password against the keyring (wrong tries count), opening nothing and logging nothing. */
+export const checkPassword = (password: string) => vault.checkKeyringPassword(password);
+/** Changes the one password: only the keyring's wrap changes; every wallet stays as it is. */
+export async function changePassword(oldPassword: string, newPassword: string) {
+  await vault.changePlatformPin(oldPassword, newPassword);
+  await dismissNewPasswordOffer();
+  await activity.add({ kind: "unlock", text: "Password changed" });
+}
 export const confirmBackup = (pin: string, checks: { index: number; word: string }[]) => vault.confirmPlatformBackup(pin, checks);
 export async function remove(pin: string) { await vault.forgetPlatformWallet(pin); await announce(); }
 
@@ -94,6 +126,7 @@ function asCoreRequest(method: Exclude<SiteMethod, "connect">, params: any): { m
       if (!(bytes instanceof Uint8Array)) throw new Error("SOLANA_TX_INVALID");
       return { method: "solana.signBytes", params: { bytes: bytes.subarray(parseSolanaTransaction(bytes).messageOffset) } };
     }
+    case "evm.switchChain": throw new Error("Switching networks signs nothing.");
   }
 }
 

@@ -62,6 +62,7 @@ globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     eth_getBlockByNumber: { baseFeePerGas: "0x3b9aca00" }, eth_maxPriorityFeePerGas: "0x1", eth_gasPrice: "0x1", eth_sendRawTransaction: `0x${"ab".repeat(32)}`,
     eth_getTransactionReceipt: { status: "0x1" }, getBalance: { value: 2_000_000_000 }, getTokenAccountsByOwner: { value: [] },
     getLatestBlockhash: { value: { blockhash: "11111111111111111111111111111111" } }, sendTransaction: "5".repeat(64),
+    getMinimumBalanceForRentExemption: 890_880,
   };
   return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: answers[method] ?? null }));
 }) as typeof fetch;
@@ -375,6 +376,7 @@ test("only reviewed files reach the network, other windows, the clipboard or the
     "src/app/App.tsx": ["tabs.create"],                     // a transaction or address on the chain's explorer
     "src/app/Send.tsx": ["tabs.create"],                    // the sent transaction on the explorer
     "src/app/Swap.tsx": ["tabs.create"],                    // the swap's transaction on the explorer
+    "src/app/Activity.tsx": ["tabs.create"],                // a past transaction on the explorer
     "src/app/kit.tsx": ["clipboard", "offscreen", "sendMessage"], // copy; for secrets, asks the background to clear the clipboard (Chrome only)
     "src/background.ts": ["offscreen", "sendMessage", "storage", "windows.create"], // the approval window; declines to the asking page; clipboard clear
     "src/content.ts": ["postMessage", "sendMessage"],       // carries the page's requests and the answers
@@ -383,6 +385,7 @@ test("only reviewed files reach the network, other windows, the clipboard or the
     "src/lib/balances.ts": ["fetch"],                       // balances: addresses only
     "src/lib/blocklist.ts": ["fetch"],                      // downloads the public phishing list: sends nothing
     "src/lib/psl.ts": ["fetch"],                            // downloads the Public Suffix List: sends nothing
+    "src/lib/market.ts": ["fetch"],                         // token prices and charts: token addresses only, never the user's
     "src/lib/lock.ts": ["sendMessage", "storage"],         // the open session in memory-only session storage; "check again" to tabs on lock
     "src/lib/relay.ts": ["fetch"],                          // Relay quotes, status and chain list: addresses, assets, amounts
     "src/lib/rpc.ts": ["fetch"],                            // public RPC: reads and signed transactions

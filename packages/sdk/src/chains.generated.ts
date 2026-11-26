@@ -10,6 +10,12 @@ export type SdkChain = {
   testnet: boolean;
   explorerUrl?: string;
   rpcUrls: string[];
+  /** Where wallets list this network: 1 first; unranked ones follow in registry order. */
+  popularRank?: number;
+  /** OP-stack chains: the GasPriceOracle predeploy (getL1Fee) for the L1 data fee. */
+  l1FeeOracle?: string;
+  /** ENS's universal resolver, on the chain where ENS lives. */
+  ens?: { universalResolver: string };
 };
 
 export const SDK_CHAINS: SdkChain[] = [
@@ -78,7 +84,11 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://ethereum-rpc.blockreq.com/v1/rpc/public",
       "https://api.blockvectra.com/v1/eth_mainnet/public",
       "https://1.rpc.thirdweb.com"
-    ]
+    ],
+    "popularRank": 1,
+    "ens": {
+      "universalResolver": "0xeeeeeeee14d718c2b47d9923deab1335e144eeee"
+    }
   },
   {
     "family": "EVM",
@@ -105,7 +115,9 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://rpc.baseazul.dev",
       "https://base-rpc.blockreq.com/v1/rpc/public",
       "https://8453.rpc.thirdweb.com"
-    ]
+    ],
+    "popularRank": 2,
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -125,7 +137,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://base-testnet.api.pocket.network",
       "https://base-sepolia.rpc.sentio.xyz",
       "https://base-sepolia-rpc.blockreq.com/v1/rpc/public"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -143,7 +156,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://api.zan.top/opt-sepolia",
       "https://optimism-sepolia-public.nodies.app",
       "https://optimism-sepolia-rpc.blockreq.com/v1/rpc/public"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -199,7 +213,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://sepolia.unichain.org",
       "https://unichain-sepolia-rpc.publicnode.com",
       "https://unichain-sepolia.drpc.org"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -228,7 +243,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://arbitrum-one-rpc.blockreq.com/v1/rpc/public",
       "https://api.blockvectra.com/v1/arb_mainnet/public",
       "https://42161.rpc.thirdweb.com"
-    ]
+    ],
+    "popularRank": 4
   },
   {
     "family": "EVM",
@@ -255,7 +271,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://rpc-optimism.blockmachine.io",
       "https://optimism-rpc.blockreq.com/v1/rpc/public",
       "https://10.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -302,7 +319,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://bsc-rpc.blockreq.com/v1/rpc/public",
       "https://api.blockvectra.com/v1/bsc_mainnet/public",
       "https://56.rpc.thirdweb.com"
-    ]
+    ],
+    "popularRank": 5
   },
   {
     "family": "EVM",
@@ -329,7 +347,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://polygon-bor-rpc.blockreq.com/v1/rpc/public",
       "https://api.blockvectra.com/v1/polygon_mainnet/public",
       "https://137.rpc.thirdweb.com"
-    ]
+    ],
+    "popularRank": 6
   },
   {
     "family": "EVM",
@@ -460,7 +479,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://lb.routeme.sh/rpc/evm/57073",
       "https://ink.api.pocket.network",
       "https://57073.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -474,7 +494,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://worldchain.drpc.org",
       "https://worldchain-mainnet.gateway.tenderly.co",
       "https://480.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -512,7 +533,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://scroll.rpc.sentio.xyz",
       "https://rpc-scroll.blockmachine.io",
       "https://534352.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x5300000000000000000000000000000000000002"
   },
   {
     "family": "EVM",
@@ -524,7 +546,8 @@ export const SDK_CHAINS: SdkChain[] = [
     "rpcUrls": [
       "https://rpc.blast.io",
       "https://blast.api.pocket.network"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -542,7 +565,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://mantle.api.pocket.network",
       "https://rpc-mantle.blockmachine.io",
       "https://5000.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -581,7 +605,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://celo-json-rpc.stakely.io",
       "https://rpc.swiftnodes.io/rpc/celo",
       "https://42220.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -616,7 +641,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://unichain-mainnet.rpc.sentio.xyz",
       "https://unichain-rpc.blockreq.com/v1/rpc/public",
       "https://130.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -647,7 +673,8 @@ export const SDK_CHAINS: SdkChain[] = [
       "https://1rpc.io/mode",
       "https://mode-mainnet.rpc.sentio.xyz",
       "https://34443.rpc.thirdweb.com"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "EVM",
@@ -659,7 +686,8 @@ export const SDK_CHAINS: SdkChain[] = [
     "rpcUrls": [
       "https://rpc.zora.energy",
       "https://zora.drpc.org"
-    ]
+    ],
+    "l1FeeOracle": "0x420000000000000000000000000000000000000F"
   },
   {
     "family": "SOLANA",
@@ -671,7 +699,8 @@ export const SDK_CHAINS: SdkChain[] = [
     "rpcUrls": [
       "https://api.mainnet-beta.solana.com",
       "https://solana-rpc.publicnode.com"
-    ]
+    ],
+    "popularRank": 3
   },
   {
     "family": "SOLANA",
