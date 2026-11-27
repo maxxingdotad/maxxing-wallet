@@ -5,6 +5,7 @@
  * Never part of the extension build.
  */
 import bs58 from "bs58";
+import { keccak256, parseTransaction, recoverTransactionAddress } from "viem";
 import { networks } from "../lib/chains";
 import { API_URL } from "../lib/balances";
 import { RELAY_API } from "../lib/relay";
@@ -36,6 +37,24 @@ const randomHex = (bytes: number) => `0x${[...crypto.getRandomValues(new Uint8Ar
 const sent = new Set<string>();
 const nonces = new Map<string, number>();
 
+/**
+ * dev.html?demo&stuck: a sent EVM transaction stays waiting (a node has it, no block does), so speeding it up or cancelling it can
+ * be clicked through. A second transaction with the same account and nonce lands at once, and the one it replaced is forgotten.
+ */
+const STUCK = new URLSearchParams(location.search).has("stuck");
+const waiting = new Map<string, { networkId: string; nonce: number; answer: Record<string, string | null> }>();
+async function takeWaiting(networkId: string, raw: `0x${string}`): Promise<string> {
+  const tx = parseTransaction(raw), from = await recoverTransactionAddress({ serializedTransaction: raw as never }), hash = keccak256(raw), nonce = tx.nonce ?? 0;
+  const rival = [...waiting].find(([, w]) => w.networkId === networkId && w.nonce === nonce && w.answer.from === from);
+  if (rival) { waiting.delete(rival[0]); sent.add(hash); }
+  else waiting.set(hash, { networkId, nonce, answer: {
+    hash, from, to: tx.to ?? null, value: hex(tx.value ?? 0n), input: tx.data ?? "0x", nonce: hex(nonce), gas: hex(tx.gas ?? 0n), blockNumber: null,
+    ...(tx.maxFeePerGas !== undefined ? { maxFeePerGas: hex(tx.maxFeePerGas), maxPriorityFeePerGas: hex(tx.maxPriorityFeePerGas ?? 0n) } : { gasPrice: hex(tx.gasPrice ?? 0n) }),
+  } });
+  nonces.set(networkId, Math.max(nonces.get(networkId) ?? 5, nonce + 1));
+  return hash;
+}
+
 function evmAnswer(networkId: string | null, method: string, params: unknown[]): unknown {
   const native = SAMPLE.evm.find(r => r[0] === networkId && r[2]);
   switch (method) {
@@ -57,7 +76,7 @@ function evmAnswer(networkId: string | null, method: string, params: unknown[]):
       return `0x${"0".repeat(64)}`;
     }
     case "eth_sendRawTransaction": { const hash = randomHex(32); sent.add(hash); return hash; }
-    case "eth_getTransactionByHash": return sent.has(String(params[0])) ? { hash: params[0], blockNumber: "0x101", nonce: "0x5" } : null;
+    case "eth_getTransactionByHash": return waiting.has(String(params[0])) ? waiting.get(String(params[0]))!.answer : sent.has(String(params[0])) ? { hash: params[0], blockNumber: "0x101", nonce: "0x5" } : null;
     case "eth_getTransactionReceipt": return sent.has(String(params[0])) ? { transactionHash: params[0], status: "0x1", blockNumber: "0x101", gasUsed: "0x5208", effectiveGasPrice: "0x1312d00", logs: [] } : null;
     default: return null;
   }
@@ -113,12 +132,13 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   if (body) {
     const networkId = networkOf(url);
     const solana = networkId?.startsWith("solana:") ?? false;
-    const answer = (one: { id: unknown; method: string; params?: unknown[] }) => {
+    const answer = async (one: { id: unknown; method: string; params?: unknown[] }) => {
+      if (!solana && STUCK && one.method === "eth_sendRawTransaction") return { jsonrpc: "2.0", id: one.id, result: await takeWaiting(String(networkId), String(one.params?.[0]) as `0x${string}`) };
       // The next nonce on that network, so a second send in a row looks like a real one.
       if (!solana && one.method === "eth_sendRawTransaction") nonces.set(String(networkId), (nonces.get(String(networkId)) ?? 5) + 1);
       return { jsonrpc: "2.0", id: one.id, result: solana ? solanaAnswer(one.method, one.params ?? []) : evmAnswer(networkId, one.method, one.params ?? []) };
     };
-    return json(Array.isArray(body) ? body.map(answer) : answer(body));
+    return json(Array.isArray(body) ? await Promise.all(body.map(answer)) : await answer(body));
   }
   return realFetch(input, init);
 };

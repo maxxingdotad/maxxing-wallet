@@ -382,7 +382,8 @@ export async function execute(prepared: Prepared, onProgress: (text: string) => 
     if (given) await approvals.note({ ...given, origin: "Relay" });
     await waitForReceipt(step.urls, hash, certain ? 120_000 : 240_000).catch(async error => {
       if (!(error instanceof Error && /slow to confirm/.test(error.message))) throw error; // it landed and failed: say so
-      await activity.add({ kind: "send", text: `Swap step not confirmed yet: ${step.label} · ${hash}`, account: prepared.from, networkId: `eip155:${prepared.chainId}`, hash, status: "pending" });
+      await activity.add({ kind: "send", text: `Swap step not confirmed yet: ${step.label} · ${hash}`, account: prepared.from, networkId: `eip155:${prepared.chainId}`, hash, status: "pending",
+        ...(typeof step.transaction.nonce === "number" ? { nonce: step.transaction.nonce } : {}) });
       throw new Error(`${step.label} isn't confirmed yet (${hash.slice(0, 10)}…). It may still land: check it on the explorer before trying again.`, { cause: error });
     });
   }

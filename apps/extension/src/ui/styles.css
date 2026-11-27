@@ -575,6 +575,10 @@ button:focus-visible, [role="switch"]:focus-visible, input:focus-visible, select
 .status-tag.pending { color: var(--text); box-shadow: inset 0 0 0 1px var(--line); animation: pending-pulse 1.6s ease-in-out infinite; }
 @keyframes pending-pulse { 50% { opacity: .55; } }
 .status-tag.failed, .status-tag.not-sent { background: var(--negative-soft); color: var(--negative); }
+/* A waiting transaction's own actions (speed up, cancel), under its line. */
+.row-actions { display: flex; gap: 6px; margin-top: 7px; }
+.row-actions .chip { height: 26px; padding: 0 10px; font-size: 11.5px; color: var(--text); cursor: pointer; }
+.row-actions .chip:hover { background: var(--surface-3); }
 .icon-btn.small { width: 28px; height: 28px; }
 @media (prefers-reduced-motion: reduce) { .status-tag.pending { animation: none; } }
 

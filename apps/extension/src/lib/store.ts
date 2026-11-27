@@ -12,14 +12,17 @@ export type Connection = { evm: string; solana: string };
 export type SitePermission = { origin: string; evm: string; solana: string; connectedAt: number; lastUsedAt: number; chainId?: number };
 /** `network`: "all", or one registry networkId; every screen follows it. */
 export type Settings = { autoLockMinutes: number; showTestnets: boolean; network: string; /** Totals and amounts show as dots. */ hideBalances: boolean };
-export type TxStatus = "pending" | "confirmed" | "failed" | "not-sent";
+/** "replaced" and "cancelled": another transaction with the same nonce got into a block instead (a speed-up, or a cancel). */
+export type TxStatus = "pending" | "confirmed" | "failed" | "not-sent" | "replaced" | "cancelled";
 /**
  * One line of Activity. Transactions also carry the account that sent them, the network, the hash (for the explorer link) and a
  * status; wallet-wide events (lock, unlock, reveal) carry none and show under every account. Older entries have only text.
+ * EVM transactions carry their nonce: two entries with the same account, network and nonce are rivals, and only one can land
+ * (lib/replace.ts). `replaceKind` marks an entry that was sent to take another's place.
  */
 export type Activity = {
   at: number; kind: "connect" | "sign" | "send" | "export" | "lock" | "unlock" | "revoke" | "blocked"; text: string; site?: string;
-  account?: string; networkId?: string; hash?: string; status?: TxStatus;
+  account?: string; networkId?: string; hash?: string; status?: TxStatus; nonce?: number; replaceKind?: "speed-up" | "cancel";
 };
 
 const DEFAULTS: Settings = { autoLockMinutes: 15, showTestnets: false, network: "all", hideBalances: false };
@@ -108,6 +111,8 @@ export const activity = {
     next[i] = { ...next[i]!, text: rewrite(next[i]!.text), ...(status ? { status } : {}) };
     return next;
   }),
+  /** Changes the whole list in one step (so two pages settling entries at once don't lose either change). */
+  change: (change: (all: Activity[]) => Activity[]) => kept.update<Activity[]>("activity", [], change),
   /** Adds the entry unless the same kind of entry for the same site was added within `ms` (so a site can't flood the list). */
   addUnlessRecent: (entry: Omit<Activity, "at">, ms: number) => kept.update<Activity[]>("activity", [], all =>
     all.some(a => a.kind === entry.kind && a.site === entry.site && Date.now() - a.at < ms) ? all : [{ ...entry, at: Date.now() }, ...all].slice(0, MAX_ACTIVITY)),

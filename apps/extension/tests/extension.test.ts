@@ -876,3 +876,126 @@ test("balances: when the API lists only MAXXING's tokens, coins come from the ch
     assert.deepEqual(rpcCalls, []);
   } finally { globalThis.fetch = real; }
 });
+
+test("rival transactions (same account, network and nonce): the one in a block settles the others", async () => {
+  const { settleSendActivity } = await import("../src/lib/send");
+  const me = "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc", net = "eip155:8453";
+  const h = (n: number) => `0x${n.toString(16).padStart(64, "0")}`;
+  const add = (n: number, nonce: number, what: string, replaceKind?: "speed-up" | "cancel", networkId = net) =>
+    store.activity.add({ kind: "send", text: `Sent on Base: ${what} · ${h(n)}`, account: n % 2 ? me : me.toLowerCase(), networkId, hash: h(n), status: "pending", nonce, ...(replaceKind ? { replaceKind } : {}) });
+  const entry = async (n: number) => (await store.activity.all()).find(a => a.hash === h(n))!;
+  // A cancel that lands: the original is cancelled. Another nonce and another network are left alone.
+  await add(1, 7, "1 USDC"); await add(2, 7, "Cancellation of 1 USDC", "cancel"); await add(3, 8, "2 USDC"); await add(4, 7, "3 USDC", undefined, "eip155:1");
+  await settleSendActivity(h(2), "confirmed");
+  assert.deepEqual([(await entry(1)).status, (await entry(1)).text.split(":")[0]], ["cancelled", "Cancelled on Base"]);
+  assert.equal((await entry(2)).status, "confirmed");
+  assert.equal((await entry(3)).status, "pending");
+  assert.equal((await entry(4)).status, "pending", "the same nonce on another network is another transaction");
+  // A speed-up that lands (even failing on chain, it used the nonce): the original was replaced.
+  await add(5, 9, "4 USDC"); await add(6, 9, "Speed-up of 4 USDC", "speed-up");
+  await settleSendActivity(h(6), "failed");
+  assert.deepEqual([(await entry(5)).status, (await entry(5)).text.split(":")[0]], ["replaced", "Replaced on Base"]);
+  // The original lands first: the speed-up after it, and a second one after that, came too late.
+  await add(7, 10, "5 USDC"); await add(8, 10, "Speed-up of 5 USDC", "speed-up"); await add(9, 10, "Speed-up of 5 USDC", "speed-up");
+  await settleSendActivity(h(7), "confirmed");
+  assert.deepEqual([(await entry(8)).status, (await entry(8)).text.split(":")[0]], ["not-sent", "Too late on Base"]);
+  assert.equal((await entry(9)).status, "not-sent");
+  // The middle one of three lands: the older was replaced, the newer came too late.
+  await add(10, 11, "6 USDC"); await add(11, 11, "Speed-up of 6 USDC", "speed-up"); await add(12, 11, "Cancellation of 6 USDC", "cancel");
+  await settleSendActivity(h(11), "confirmed");
+  assert.deepEqual([(await entry(10)).status, (await entry(12)).status], ["replaced", "not-sent"]);
+  // "Not sent" proves nothing about the nonce: rivals keep waiting.
+  await add(13, 12, "7 USDC"); await add(14, 12, "Speed-up of 7 USDC", "speed-up");
+  await settleSendActivity(h(14), "not-sent");
+  assert.equal((await entry(13)).status, "pending");
+  // The Activity screen offers the actions only for this account's waiting EVM transactions.
+  const { replaceable } = await import("../src/app/Activity");
+  assert.equal(replaceable(await entry(13), { evm: me }), true);
+  assert.equal(replaceable(await entry(13), { evm: "0x1111111111111111111111111111111111111111" }), false, "another account's");
+  assert.equal(replaceable(await entry(7), { evm: me }), false, "already confirmed");
+  assert.equal(replaceable({ at: 1, kind: "send", text: "Sent 1 SOL on Solana · sig", account: me, networkId: "solana:mainnet", hash: "sig", status: "pending" }, { evm: me }), false, "Solana has no replacement");
+});
+
+test("speed up and cancel: the same nonce, a fee at least an eighth higher and never below the network's; refused when there is nothing to replace", async () => {
+  const { draftReplacement, sendReplacement, bumped, describe, replaceMessage, replacedElsewhere, ReplaceError } = await import("../src/lib/replace");
+  const { settleSendActivity } = await import("../src/lib/send");
+  const { networks } = await import("../src/lib/chains");
+  const { RETRY_WAITS_MS } = await import("../src/lib/rpc");
+  const waits = [...RETRY_WAITS_MS]; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, 0, 0);
+  const base = networks(true).find(n => n.networkId === "eip155:8453")!;
+  const from = wallet.snapshot().public!.evm, to = "0x2222222222222222222222222222222222222222";
+  const hash = `0x${"ab".repeat(32)}`, GWEI = 1_000_000_000n, hex = (n: bigint) => `0x${n.toString(16)}`;
+  const waitingTx = { hash, from: from.toLowerCase(), to, value: hex(5n * 10n ** 16n), input: "0x", nonce: "0x7", gas: "0x5208", maxFeePerGas: hex(GWEI), maxPriorityFeePerGas: hex(GWEI / 10n), blockNumber: null as string | null };
+  let answers: Record<string, unknown> = {}; const sentRaw: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (_: string, init?: RequestInit) => {
+    const { method, params } = JSON.parse(String(init?.body));
+    if (method === "eth_sendRawTransaction") { sentRaw.push(params[0]); return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: `0x${"cd".repeat(32)}` })); }
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: answers[method] ?? null }));
+  }) as typeof fetch;
+  const quiet = { eth_getTransactionByHash: waitingTx, eth_getBlockByNumber: { baseFeePerGas: hex(GWEI / 100n) }, eth_maxPriorityFeePerGas: hex(GWEI / 1000n), eth_getBalance: hex(10n ** 18n), eth_estimateGas: "0x5208" };
+  try {
+    assert.equal(bumped(1000n), 1125n);
+    assert.equal(bumped(1n), 2n, "rounded up, so a tiny fee still rises");
+    // Speed up on a quiet network: the same transaction, each fee an eighth higher.
+    answers = quiet;
+    const faster = await draftReplacement({ network: base, from, hash, kind: "speed-up" });
+    assert.deepEqual([faster.transaction.nonce, faster.transaction.to, faster.transaction.value, faster.transaction.gas, faster.transaction.data], [7, to, 5n * 10n ** 16n, 21000n, undefined]);
+    assert.deepEqual([faster.transaction.maxFeePerGas, faster.transaction.maxPriorityFeePerGas], [GWEI * 1125n / 1000n, GWEI * 1125n / 10000n]);
+    assert.deepEqual([faster.oldMaxFee, faster.newMaxFee], [21000n * GWEI, 21000n * GWEI * 1125n / 1000n]);
+    // The network asks more than an eighth above the original now: its fee is used.
+    answers = { ...quiet, eth_getBlockByNumber: { baseFeePerGas: hex(2n * GWEI) }, eth_maxPriorityFeePerGas: hex(GWEI) };
+    const busy = await draftReplacement({ network: base, from, hash, kind: "speed-up" });
+    assert.deepEqual([busy.transaction.maxFeePerGas, busy.transaction.maxPriorityFeePerGas], [5n * GWEI, GWEI]);
+    // A contract call keeps its data and gas limit.
+    answers = { ...quiet, eth_getTransactionByHash: { ...waitingTx, value: "0x0", input: "0xa9059cbb00", gas: "0xfde8" } };
+    const call = await draftReplacement({ network: base, from, hash, kind: "speed-up" });
+    assert.deepEqual([call.transaction.data, call.transaction.gas, call.transaction.value], ["0xa9059cbb00", 65000n, 0n]);
+    // Cancel: nothing, to yourself, the same nonce, a plain transfer's gas, the higher fee.
+    answers = quiet;
+    const cancel = await draftReplacement({ network: base, from, hash, kind: "cancel" });
+    assert.deepEqual([cancel.transaction.nonce, cancel.transaction.to?.toLowerCase(), cancel.transaction.value, cancel.transaction.data, cancel.transaction.gas], [7, from.toLowerCase(), 0n, undefined, 25200n]);
+    assert.equal(cancel.transaction.maxFeePerGas, GWEI * 1125n / 1000n);
+    // A transaction priced the old way stays that way.
+    answers = { ...quiet, eth_getTransactionByHash: { ...waitingTx, maxFeePerGas: undefined, maxPriorityFeePerGas: undefined, gasPrice: hex(GWEI) }, eth_gasPrice: hex(GWEI / 2n) };
+    const legacy = await draftReplacement({ network: base, from, hash, kind: "speed-up" });
+    assert.deepEqual([legacy.transaction.type, legacy.transaction.gasPrice, legacy.transaction.maxFeePerGas], ["legacy", GWEI * 1125n / 1000n, undefined]);
+    // Nothing to replace: in a block already, or no node has it. Not this account's. Not enough for the higher fee.
+    answers = { ...quiet, eth_getTransactionByHash: { ...waitingTx, blockNumber: "0x10" } };
+    await assert.rejects(draftReplacement({ network: base, from, hash, kind: "cancel" }), (e: unknown) => e instanceof ReplaceError && e.reason === "landed");
+    answers = { ...quiet, eth_getTransactionByHash: null };
+    await assert.rejects(draftReplacement({ network: base, from, hash, kind: "cancel" }), (e: unknown) => e instanceof ReplaceError && e.reason === "gone");
+    answers = quiet;
+    await assert.rejects(draftReplacement({ network: base, from: to, hash, kind: "cancel" }), /another account/);
+    answers = { ...quiet, eth_getBalance: hex(5n * 10n ** 16n) };
+    await assert.rejects(draftReplacement({ network: base, from, hash, kind: "speed-up" }), /enough ETH for the higher fee/);
+    assert.equal((await draftReplacement({ network: base, from, hash, kind: "cancel" })).transaction.value, 0n, "a cancel moves nothing, so it still fits");
+    const sol = networks(true).find(n => n.networkId === "solana:mainnet")!;
+    await assert.rejects(draftReplacement({ network: sol, from, hash, kind: "cancel" }), /EVM/);
+
+    // Sent: signed by the wallet, written to Activity as the original's rival; when it lands the original is settled.
+    await store.activity.add({ kind: "send", text: `Sent on Base: 0.05 ETH · ${hash}`, account: from, networkId: base.networkId, hash, status: "pending" });
+    const sent = await sendReplacement(cancel);
+    assert.equal(sentRaw.length, 1);
+    assert.match(sentRaw[0]!, /^0x02/, "an EIP-1559 transaction, signed");
+    const log = await store.activity.all();
+    assert.deepEqual([log[0]!.text, log[0]!.nonce, log[0]!.replaceKind, log[0]!.status], [`Sent on Base: Cancel · 0.05 ETH · ${sent.id}`, 7, "cancel", "pending"]);
+    assert.equal(log.find(a => a.hash === hash)!.nonce, 7, "the original now carries its nonce");
+    await settleSendActivity(sent.id, "confirmed");
+    assert.equal((await store.activity.all()).find(a => a.hash === hash)!.status, "cancelled");
+    assert.equal(describe({ text: `Sent on Base: Speed-up · 0.05 ETH · ${hash}` }), "0.05 ETH", "a second speed-up doesn't nest the words");
+
+    // The network's refusals, in plain words.
+    assert.match(replaceMessage(new Error("replacement transaction underpriced")), /higher fee/);
+    assert.match(replaceMessage(new Error("nonce too low")), /got into a block/);
+    // Replaced from elsewhere: no node knows it and the chain has used its nonce; only after two minutes, and asked twice.
+    const old = { at: 1_000, kind: "send" as const, text: "Sent", account: from, networkId: base.networkId, hash, status: "pending" as const, nonce: 7 };
+    answers = { eth_getTransactionCount: "0x8" };
+    assert.equal(await replacedElsewhere(base, old, 1_000 + 121_000), true);
+    assert.equal(await replacedElsewhere(base, old, 1_000 + 60_000), false, "too soon to tell");
+    answers = { eth_getTransactionCount: "0x7" };
+    assert.equal(await replacedElsewhere(base, old, 1_000 + 121_000), false, "its nonce is still free");
+    answers = { eth_getTransactionCount: "0x8", eth_getTransactionReceipt: { status: "0x1" } };
+    assert.equal(await replacedElsewhere(base, old, 1_000 + 121_000), false, "it landed itself");
+  } finally { globalThis.fetch = real; RETRY_WAITS_MS.splice(0, RETRY_WAITS_MS.length, ...waits); }
+});

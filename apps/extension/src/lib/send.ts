@@ -184,14 +184,35 @@ export async function sendEvm(draft: EvmDraft): Promise<Sent> {
   const { id: hash, certain } = await sendSigned(draft.network.rpc, "eth_sendRawTransaction", [raw], keccak256(raw));
   if (draft.kind === "send") await remember(draft.to, "EVM");
   await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} on ${draft.network.name}: ${draft.summary.tokenCall?.text ?? draft.summary.amount} · ${hash}`,
-    account: draft.from, networkId: draft.network.networkId, hash, status: "pending" });
+    account: draft.from, networkId: draft.network.networkId, hash, status: "pending", ...(typeof draft.transaction.nonce === "number" ? { nonce: draft.transaction.nonce } : {}) });
   return { id: hash, certain };
 }
 
-/** Updates a send's Activity entry once its outcome is known: confirmed, failed on the network, or not sent. */
+/** How a send's Activity text starts while its outcome isn't known. */
+export const SENT_PREFIX = /^(Sent|Not confirmed yet \(check the explorer before sending again\))/;
+
+/**
+ * Updates a send's Activity entry once its outcome is known: confirmed, failed on the network, or not sent.
+ * A transaction in a block (confirmed or failed) has used its nonce, so every other pending entry with that account, network and
+ * nonce can never land, and is settled with it: an older one was replaced (or cancelled, when the one that landed was a cancel);
+ * a newer one (a speed-up or cancel that lost the race) came too late.
+ */
 export function settleSendActivity(id: string, outcome: "confirmed" | "failed" | "not-sent") {
   const label = outcome === "confirmed" ? "Confirmed" : outcome === "failed" ? "Failed on the network" : "Not sent";
-  return activity.settle(id, text => text.replace(/^(Sent|Not confirmed yet \(check the explorer before sending again\))/, label), outcome);
+  return activity.change(all => {
+    const i = all.findIndex(a => a.hash === id || a.text.includes(id));
+    if (i < 0) return all;
+    const next = [...all], landed = next[i]!;
+    next[i] = { ...landed, text: landed.text.replace(SENT_PREFIX, label), status: outcome };
+    if (outcome === "not-sent" || landed.nonce === undefined || !landed.account || !landed.networkId) return next;
+    for (const [j, a] of next.entries()) {
+      if (j === i || a.status !== "pending" || a.nonce !== landed.nonce || a.networkId !== landed.networkId || a.account?.toLowerCase() !== landed.account.toLowerCase()) continue;
+      next[j] = j > i // the list is newest first: further down is older
+        ? { ...a, text: a.text.replace(SENT_PREFIX, landed.replaceKind === "cancel" ? "Cancelled" : "Replaced"), status: landed.replaceKind === "cancel" ? "cancelled" : "replaced" }
+        : { ...a, text: a.text.replace(SENT_PREFIX, "Too late"), status: "not-sent" };
+    }
+    return next;
+  });
 }
 
 /**
