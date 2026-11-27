@@ -38,6 +38,39 @@ export async function price(networkId: string, address: string | null): Promise<
   return { priceUsd: num(item?.priceUsd), change24hPct: num(item?.change24hPct) };
 }
 
+const PRICES_PER_CALL = 10; // the Data API takes 25; smaller calls answer sooner and lose less when one fails
+/**
+ * Prices for many assets at once (Home's balances read from the chains carry no dollar value of their own). Keyed by
+ * `networkId|address` in lowercase (`networkId|` for the native coin); an asset the market doesn't know is simply absent.
+ */
+export async function prices(assets: { networkId: string; address: string | null }[]): Promise<Map<string, Price>> {
+  const out = new Map<string, Price>();
+  const wanted = new Map<string, string[]>(); // the market's id → the assets asking for it (a coin and its wrapped token share one)
+  for (const a of assets) {
+    const token = marketToken(a.networkId, a.address);
+    if (!token) continue;
+    const id = `${a.networkId}:${token}`, key = `${a.networkId}|${(a.address ?? "").toLowerCase()}`;
+    wanted.set(id, [...(wanted.get(id) ?? []), key]);
+  }
+  const ids = [...wanted.keys()], calls: string[][] = [];
+  for (let i = 0; i < ids.length; i += PRICES_PER_CALL) calls.push(ids.slice(i, i + PRICES_PER_CALL));
+  const num = (v: unknown) => v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+  const ask = async (chunk: string[]): Promise<void> => {
+    const body = await get<{ items: { id: string; priceUsd: string | number | null; change24hPct: string | number | null }[] }>(`/v1/public/prices?ids=${encodeURIComponent(chunk.join(","))}`);
+    // One token the service can't answer for fails its whole call: ask again in halves, so the rest still get their price.
+    if (!body) { if (chunk.length > 1) { const half = Math.ceil(chunk.length / 2); await Promise.all([ask(chunk.slice(0, half)), ask(chunk.slice(half))]); } return; }
+    // Each answer is matched by its id, so a reordered answer can't price the wrong asset.
+    for (const item of body.items ?? []) {
+      const id = chunk.find(c => c.toLowerCase() === String(item?.id ?? "").toLowerCase());
+      const priceUsd = num(item?.priceUsd);
+      if (!id || priceUsd === null || priceUsd <= 0) continue;
+      for (const key of wanted.get(id) ?? []) out.set(key, { priceUsd, change24hPct: num(item.change24hPct) });
+    }
+  };
+  await Promise.all(calls.map(ask));
+  return out;
+}
+
 export type Range = "24h" | "7d";
 /** Closing prices over the range: 24 hourly points, or 42 four-hourly points. */
 export async function chart(networkId: string, address: string | null, range: Range): Promise<{ time: number; close: number }[]> {

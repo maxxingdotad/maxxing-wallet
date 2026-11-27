@@ -7,11 +7,16 @@ import { knownTokens, KNOWN_SOLANA_MINTS } from "@maxxing/wallet-core/chains";
 import { chainMark, networks, type Network } from "./chains";
 import { rpc } from "./rpc";
 import { nativeAsset } from "./assets";
+import { prices, type Price } from "./market";
 import type { Holding } from "../ui/parts";
 
 export const API_URL = "https://api.maxxing.ad";
 const APP_ID = "maxxing-extension";
-const STABLE = /^(USDC|USDT|USDG|DAI|USDC\.E|USDBC|PYUSD)$/i;
+/** How many holdings get a price looked up in one load. */
+const MAX_PRICED = 40;
+const PRICE_WAIT_MS = 6000;
+const ETHEREUM = "eip155:1";
+const STABLE =/^(USDC|USDT|USDG|DAI|USDC\.E|USDBC|PYUSD)$/i;
 
 export type Portfolio = { holdings: Holding[]; totalUsd: number; priced: boolean; source: "api" | "chain"; errors: string[] };
 type Raw = { network: Network; symbol: string; name: string; decimals: number; raw: bigint; address: string | null; logo?: string | null; usd?: number | null };
@@ -57,16 +62,20 @@ async function solanaBalances(network: Network, owner: string): Promise<Raw[]> {
 }
 
 /** The Data API's balances for one address (all its networks at once), or null when the API can't answer. */
-async function apiBalances(address: string, wanted: Network[]): Promise<Raw[] | null> {
+/**
+ * `complete: false`: the API listed only MAXXING's own tokens (its full portfolio data is off right now), so coins and the
+ * tokens the wallet names still have to be read from the chains. Only an explicit `true` counts as the whole picture.
+ */
+async function apiBalances(address: string, wanted: Network[]): Promise<{ items: Raw[]; complete: boolean } | null> {
   try {
     const response = await fetch(`${API_URL}/v1/public/wallets/${encodeURIComponent(address)}/balances`, { headers: { "x-maxxing-app": APP_ID }, credentials: "omit", referrerPolicy: "no-referrer" });
     if (!response.ok) return null;
-    const body = await response.json() as { items: { chainId: string; address: string; native: boolean; symbol: string; name: string; imageUrl: string | null; balanceRaw: string; decimals: number | null; valueUsd: string | null }[] };
-    return body.items.flatMap(item => {
+    const body = await response.json() as { complete?: boolean; items: { chainId: string; address: string; native: boolean; symbol: string; name: string; imageUrl: string | null; balanceRaw: string; decimals: number | null; valueUsd: string | null }[] };
+    return { complete: body.complete === true, items: body.items.flatMap(item => {
       const network = wanted.find(n => n.networkId === item.chainId);
       if (!network || item.decimals === null) return [];
       return [{ network, symbol: item.symbol, name: item.name, decimals: item.decimals, raw: BigInt(item.balanceRaw), address: item.native ? null : item.address, logo: item.imageUrl, usd: item.valueUsd === null ? null : Number(item.valueUsd) }];
-    });
+    }) };
   } catch { return null; }
 }
 
@@ -82,16 +91,38 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
   let raws: Raw[] = [];
   let source: Portfolio["source"] = "chain";
   const [fromApiEvm, fromApiSol] = await Promise.all([apiBalances(account.evm, all), apiBalances(account.solana, all)]);
-  if (fromApiEvm && fromApiSol) {
-    raws = [...fromApiEvm, ...fromApiSol];
-    source = "api";
-    // The Data API covers MAXXING's mainnets; test networks and networks the user added are read from their own chain.
-    for (const network of all.filter(n => n.testnet || n.custom)) {
-      try { raws.push(...await (network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm))); } catch { errors.push(network.name); }
-    }
-  } else {
-    const reads = await Promise.allSettled(all.map(network => network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm)));
-    reads.forEach((read, i) => { if (read.status === "fulfilled") raws.push(...read.value); else errors.push(all[i]!.name); });
+  const id = (r: Raw) => `${r.network.networkId}|${(r.address ?? "").toLowerCase()}`;
+  const fromApi = [...(fromApiEvm?.items ?? []), ...(fromApiSol?.items ?? [])];
+  if (fromApiEvm && fromApiSol) source = "api";
+  // Read from its own chain: every network the API didn't fully answer for (it can't be reached, or it listed only MAXXING's
+  // tokens), and always test networks and networks the user added, which the API doesn't cover.
+  const whole = (n: Network) => !n.testnet && !n.custom && (n.family === "SOLANA" ? fromApiSol : fromApiEvm)?.complete === true;
+  const onChain = all.filter(n => !whole(n));
+  const reads = await Promise.allSettled(onChain.map(network => network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm)));
+  const chain: Raw[] = [];
+  reads.forEach((read, i) => { if (read.status === "fulfilled") chain.push(...read.value); else errors.push(onChain[i]!.name); });
+  // The chain's balance is the fresh one; the API's row adds what the chain can't say (the name, the dollar value) and the
+  // MAXXING tokens the wallet doesn't name.
+  const seen = new Map(fromApi.map(r => [id(r), r]));
+  raws = [...chain.map(r => { const api = seen.get(id(r)); seen.delete(id(r)); return api ? { ...api, raw: r.raw, usd: api.raw === r.raw ? api.usd : undefined } : r; }), ...seen.values()];
+  // Dollar values for what the chains reported, from the Data API's prices (one call per 25 assets). Never for a test network
+  // or a network the user added: a coin there is worth whatever it says.
+  // Only coins and the tokens the wallet names: a wallet can be sent hundreds of worthless tokens, the price service is slow
+  // for ones it has never seen, and one it can't answer for fails its whole call. An unnamed token is priced on its own screen.
+  const named = (r: Raw) => r.address === null || (r.network.family === "SOLANA" ? !!KNOWN_SOLANA_MINTS[r.address] : knownTokens(r.network.networkId).some(t => t.address.toLowerCase() === r.address!.toLowerCase()));
+  // Dollar coins are a dollar each and need no lookup.
+  const unpriced = raws.filter(r => r.raw > 0n && r.usd == null && !r.network.testnet && !r.network.custom && named(r) && !STABLE.test(r.symbol)).slice(0, MAX_PRICED);
+  // ETH is one coin on every network that uses it: asked once (as Ethereum's), not once per network.
+  const asked = (r: Raw) => r.address === null && r.network.family === "EVM" && r.network.nativeSymbol === "ETH" ? { networkId: ETHEREUM, address: null } : { networkId: r.network.networkId, address: r.address };
+  const askedKey = (r: Raw) => { const a = asked(r); return `${a.networkId}|${(a.address ?? "").toLowerCase()}`; };
+  // Prices get a few seconds: balances show either way, and a slow answer is ready (cached by the API) for the next load.
+  const market = unpriced.length ? await Promise.race([prices(unpriced.map(asked)), new Promise<Map<string, Price>>(done => setTimeout(() => done(new Map()), PRICE_WAIT_MS))]) : new Map<string, Price>();
+  const change = new Map<string, number>();
+  for (const r of unpriced) {
+    const p = market.get(askedKey(r));
+    if (!p?.priceUsd) continue;
+    r.usd = Number(r.raw) / 10 ** r.decimals * p.priceUsd;
+    if (p.change24hPct !== null) change.set(id(r), p.change24hPct);
   }
   // What's held. Home adds each network's default assets at 0 itself (lib/assets.ts), so nothing is listed here at 0.
   const holdings: Holding[] = raws.filter(r => r.raw > 0n).map(r => {
@@ -100,7 +131,7 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
     const custom = !!r.network.custom;
     const usd = r.usd ?? (STABLE.test(r.symbol) && !custom ? amount : null);
     return {
-      symbol: r.symbol, name: r.name, chain: chainMark(r.network), amount: format(r.raw, r.decimals), usd: usd ?? 0, change: 0,
+      symbol: r.symbol, name: r.name, chain: chainMark(r.network), amount: format(r.raw, r.decimals), usd: usd ?? 0, change: change.get(id(r)) ?? 0,
       // Only the extension's own logos: a remote image would tell its host when the wallet is open (the CSP allows none).
       logo: custom ? undefined : r.symbol === "ETH" ? "/brand/eth-symbol.webp" : r.symbol === "SOL" ? "/brand/sol-symbol.webp" : undefined,
       color: STABLE.test(r.symbol) ? "#3E73C4" : undefined, priced: usd !== null, raw: r.raw.toString(), decimals: r.decimals, address: r.address, networkId: r.network.networkId,

@@ -841,3 +841,38 @@ test("accounts from one phrase: adding and switching updates what connected site
   assert.ok(!JSON.stringify(log).includes(phrase.split(" ")[0]! + " "));
   await assert.rejects(wallet.revealKeys("000000"), /Wrong PIN/);
 });
+
+test("balances: when the API lists only MAXXING's tokens, coins come from the chain and are priced by the Data API", async () => {
+  const { loadPortfolio } = await import("../src/lib/balances");
+  const owner = "0x1111111111111111111111111111111111111111", sol = "So11111111111111111111111111111111111111112";
+  let complete = false; const rpcCalls: string[] = [], priceCalls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/balances")) return new Response(JSON.stringify({ items: [], complete, source: complete ? "codex" : "maxxing" }));
+    if (url.includes("/v1/public/prices")) {
+      priceCalls.push(url);
+      const ids = decodeURIComponent(url.split("ids=")[1]!).split(",");
+      return new Response(JSON.stringify({ items: ids.map(id => ({ id, priceUsd: "2000.5", change24hPct: "-1.5" })) }));
+    }
+    const { method } = JSON.parse(String(init?.body ?? "{}"));
+    rpcCalls.push(method);
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: method === "eth_getBalance" ? "0xde0b6b3a7640000" : "0x" }));
+  }) as typeof fetch;
+  try {
+    const p = await loadPortfolio({ evm: owner, solana: sol }, false, "eip155:8453");
+    const eth = p.holdings.find(h => h.networkId === "eip155:8453" && !h.address)!;
+    assert.ok(eth, "the coin is read from the chain, not left out because the API answered");
+    assert.equal(eth.amount, "1");
+    assert.equal(eth.usd, 2000.5, "valued at the Data API's price");
+    assert.equal(eth.priced, true);
+    assert.equal(eth.change, -1.5);
+    assert.equal(priceCalls.length, 1);
+    assert.match(decodeURIComponent(priceCalls[0]!), /ids=eip155:1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2$/, "ETH is priced once, as Ethereum's wrapped token, whatever the network");
+    // A complete answer is the whole picture: nothing is read from the chain.
+    complete = true; rpcCalls.length = 0;
+    const whole = await loadPortfolio({ evm: owner, solana: sol }, false, "eip155:8453");
+    assert.equal(whole.holdings.length, 0);
+    assert.deepEqual(rpcCalls, []);
+  } finally { globalThis.fetch = real; }
+});
