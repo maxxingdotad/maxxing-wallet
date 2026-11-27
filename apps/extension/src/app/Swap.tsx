@@ -1,8 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, ArrowDownUp, ExternalLink, Route } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowDownUp, ChevronDown, ExternalLink, Route } from "lucide-react";
+import { HoldButton, ReceiptCard } from "../ui/moving";
+import { BigAmount } from "../ui/confirm";
 import { knownTokens, KNOWN_SOLANA_MINTS } from "@maxxing/wallet-core/chains";
-import { Dock, usd, type DockTab, type Holding } from "../ui/parts";
+import { Dock, plainDecimal, short, usd, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
+import { AssetMark, AssetSheet } from "../ui/asset-picker";
 import { loadPortfolio } from "../lib/balances";
 import { explorerTx, networkLabel, networks, type Network } from "../lib/chains";
 import { parseUnits } from "../lib/send";
@@ -21,6 +24,35 @@ function assetsOn(network: Network): Asset[] {
   return [native, ...knownTokens(network.networkId).map(t => ({ network, address: t.address, symbol: t.symbol, decimals: t.decimals }))];
 }
 const key = (a: Asset) => `${a.network.networkId}|${a.address ?? ""}`;
+
+/** A sensible first pair: what you hold most of, into a dollar coin on the same network (or into its coin, from a dollar coin). */
+function defaultTo(from: Asset, all: Asset[]): Asset | undefined {
+  const same = all.filter(a => a.network.networkId === from.network.networkId && key(a) !== key(from));
+  return /^USD[CT]/.test(from.symbol) ? same.find(a => a.address === null) : same.find(a => a.symbol === "USDC") ?? same.find(a => a.address === null);
+}
+/** An amount for reading: at most eight significant digits (a coin's eighteen decimals don't fit, and nobody reads them). */
+const nice = (amount: string) => { const n = Number(String(amount).replace(/,/g, "")); return Number.isFinite(n) ? n.toLocaleString("en-US", { maximumSignificantDigits: 8 }) : amount; };
+/** A fee for reading: three significant digits of the coin, and dollars with a floor of a cent. */
+const coins = (n: number) => n.toLocaleString("en-US", { maximumSignificantDigits: 3 });
+const feeText = (n: number) => n < 0.01 ? "< $0.01" : usd(n);
+/** The amount typed, in the token's smallest unit, or null while it isn't a number yet. */
+function rawOf(amount: string, decimals: number): bigint | null {
+  try { return amount && Number(amount) > 0 ? parseUnits(amount, decimals) : null; } catch { return null; }
+}
+
+type Choice = { key: string; symbol: string; network: Network; balance?: string };
+/** Swap's token chooser: a chip with the chosen token (or "Select") that opens the shared token sheet. */
+function AssetPicker({ label, value, choices, onPick, testId }: { label: string; value: Choice | null; choices: Choice[]; onPick: (key: string) => void; testId: string }) {
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" className={`asset-chip${value ? "" : " empty"}`} data-testid={testId} aria-label={value ? `${label}: ${value.symbol} on ${value.network.name}` : `${label}: select a token`} onClick={() => setOpen(true)}>
+      {value ? <><AssetMark symbol={value.symbol} networkId={value.network.networkId} networkName={value.network.name} size={26} /><b>{value.symbol}</b></> : <b>Select</b>}
+      <ChevronDown size={15} />
+    </button>
+    {open && <AssetSheet title={label} selected={value?.key} onPick={onPick} onClose={() => setOpen(false)}
+      choices={choices.map(c => ({ key: c.key, title: c.symbol, sub: networkLabel(c.network), end: c.balance, mark: <AssetMark symbol={c.symbol} networkId={c.network.networkId} networkName={c.network.name} size={34} /> }))} />}
+  </>;
+}
 
 /** MAXXING's fee on its own line: the rate and its value in dollars (from the quote, checked against the rate). */
 function MaxxingFeeRow({ q }: { q: Quote }) {
@@ -44,6 +76,35 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   const toAssets = useMemo(() => all.flatMap(assetsOn), [all]);
   const from = fromAssets.find(x => key(x.asset) === fromKey) ?? null;
   const to = toAssets.find(a => key(a) === toKey) ?? null;
+  // Start ready to go: pay with the biggest holding, get a dollar coin (or the coin) on the same network.
+  useEffect(() => {
+    if (fromKey || !fromAssets.length || !toAssets.length) return;
+    const top = [...fromAssets].sort((a, b) => b.holding.usd - a.holding.usd)[0]!;
+    setFromKey(key(top.asset));
+    const next = defaultTo(top.asset, toAssets);
+    if (next && !toKey) setToKey(key(next));
+  }, [fromAssets, toAssets]);
+  const amountRaw = from ? rawOf(amount, from.asset.decimals) : null;
+  const tooMuch = !!from && amountRaw !== null && !!from.holding.raw && amountRaw > BigInt(from.holding.raw);
+  const unitPrice = from?.holding.priced !== false && from ? from.holding.usd / (Number(from.holding.amount.replace(/,/g, "")) || Infinity) : 0;
+  // The pay amount can be typed in dollars or in the token; `amount` is always the token amount.
+  const [inUsd, setInUsd] = useState(false), [usdText, setUsdText] = useState("");
+  const tokenOf = (dollars: string) => { const n = Number(dollars); return n > 0 && unitPrice > 0 ? plainDecimal(n / unitPrice) : ""; };
+  const dollarsOf = (tokens: string) => { const n = Number(tokens); return n > 0 && unitPrice > 0 ? (n * unitPrice).toFixed(2) : ""; };
+  const typed = (v: string) => { if (inUsd) { setUsdText(v); setAmount(tokenOf(v)); } else setAmount(v); };
+  const clear = () => { setAmount(""); setUsdText(""); };
+  const other = inUsd ? `${amountRaw !== null ? `≈ ${Number(amount).toLocaleString("en-US", { maximumSignificantDigits: 6 })}` : "0"} ${from?.asset.symbol ?? ""}`
+    : amountRaw !== null && unitPrice > 0 ? `≈ ${usd(Number(amount) * unitPrice)}` : "$0.00";
+  const share = (pct: bigint) => { if (from?.holding.raw) { const next = formatUnits(BigInt(from.holding.raw) * pct / 100n, from.asset.decimals); setAmount(next); setUsdText(dollarsOf(next)); } };
+  const canFlip = !!to && fromAssets.some(x => key(x.asset) === toKey);
+  const toHeld = to ? (holdings ?? []).find(h => h.networkId === to.network.networkId && (h.address ?? null)?.toLowerCase() === (to.address ?? undefined)?.toLowerCase())?.amount : undefined;
+  const dash = <i className="dash">—</i>;
+  const perOne = q && from && Number(amount) > 0 ? Number(String(q.amountOut).replace(/,/g, "")) / Number(amount) : NaN;
+  const rate = from && to && Number.isFinite(perOne) && perOne > 0 ? `1 ${from.asset.symbol} ≈ ${perOne.toLocaleString("en-US", { maximumSignificantDigits: 6 })} ${to.symbol}` : null;
+  const flip = () => { const f = fromKey; setFromKey(toKey); setToKey(f); clear(); };
+  // The button says what's missing, so the screen never has a dead grey button without a reason.
+  const action = !from ? "Choose what you pay" : !to ? "Choose what you get" : amountRaw === null ? "Enter an amount"
+    : tooMuch ? `Not enough ${from.asset.symbol}` : quoting ? "Finding the best route…" : q ? "Review swap" : error ? "No route for this swap" : "Finding the best route…";
   // Paying with a token: the network fee can come out of the swap (gasless), on by default when there's no coin for gas there.
   // Gasless is offered only for a token that takes an EIP-3009 authorization from Relay's approval contract on that network
   // (checked by simulating the call), and across networks: Relay's same-network gasless route would need a lasting allowance.
@@ -64,7 +125,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   // A fresh quote as the inputs settle.
   useEffect(() => {
     setQ(null); setError("");
-    if (!from || !to || !amount || Number(amount) <= 0) return;
+    if (!from || !to || !amount || Number(amount) <= 0 || tooMuch) return;
     let live = true;
     const t = setTimeout(async () => {
       setQuoting(true);
@@ -75,7 +136,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
       } catch (e) { if (live) setError(message(e)); } finally { if (live) setQuoting(false); }
     }, 450);
     return () => { live = false; clearTimeout(t); };
-  }, [fromKey, toKey, amount, gasless]);
+  }, [fromKey, toKey, amount, gasless, tooMuch]);
 
   // The exact transactions to sign, checked against Relay's contracts, with fees set here.
   useEffect(() => {
@@ -87,36 +148,56 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   }, [reviewing, q]);
 
   if (progress) return <div className="popup"><div className="backdrop" /><PageHead title="Swap & bridge" /><Busy text={progress} /></div>;
-  if (done) return <div className="popup"><div className="backdrop" />
-    <div className="scroll" style={{ paddingTop: 40 }}>
-      <div className="danger-mark" style={{ background: "var(--positive-soft)", color: "var(--positive)" }}><Route size={28} /></div>
-      <h2 className="center-title">{done.state === "success" ? "Arrived" : "On its way"}</h2>
-      <p className="center-sub">{done.state === "success" ? "Relay delivered it." : "Relay is delivering it. It shows in your balance when it lands."}</p>
-      {done.hashes.map(h => <div key={h} className="card" style={{ padding: 10, marginBottom: 8 }}><div className="addr">{h}</div></div>)}
+  if (done) {
+    // Relay's own reading, said as it is: delivered, failed, refunded, or still on its way.
+    const view = done.state === "success" ? { tone: "good", title: "Arrived", text: "Relay delivered it. It shows in your balance now." }
+      : done.state === "failure" ? { tone: "bad", title: "Failed", text: "Relay couldn't complete this swap. Check the explorer for what happened to your funds." }
+      : done.state === "refund" ? { tone: "warn", title: "Refunded", text: "Relay couldn't complete the swap and is sending your funds back." }
+      : { tone: "warn", title: "On its way", text: "Relay is delivering it. It shows in your balance when it lands." };
+    const colors = view.tone === "good" ? { background: "var(--positive-soft)", color: "var(--positive)" } : view.tone === "bad" ? { background: "var(--negative-soft)", color: "var(--negative)" } : { background: "rgba(240,185,11,.14)", color: "#F0B90B" };
+    return <div className="popup"><div className="backdrop" />
+    <div className="scroll" style={{ paddingTop: 22 }} data-testid="swap-result" data-state={done.state}>
+      <ReceiptCard className="receipt">
+        <span className={`receipt-status ${view.tone}`} style={colors}><Route size={13} />{view.title}</span>
+        <BigAmount value={amount.replace(/,/g, "")} symbol={from?.asset.symbol ?? ""} />
+        <div className="receipt-out num">→ {q ? nice(q.amountOut) : "…"} {to?.symbol}</div>
+        <div className="receipt-to">{from && networkLabel(from.asset.network)}{to && <> to <b>{networkLabel(to.network)}</b></>} · through Relay</div>
+        {done.hashes.map(h => <div key={h} className="receipt-hash num" title={h}>{short(h)}</div>)}
+      </ReceiptCard>
+      <p className="center-sub" style={{ marginTop: 16 }}>{view.text}</p>
     </div>
-    <div className="footer">{from && done.hashes.at(-1) && <button type="button" className="btn secondary" onClick={() => { const url = explorerTx(from.asset.network, done.hashes.at(-1)!); if (url) void chrome.tabs.create({ url }); }}><ExternalLink size={16} />View on explorer</button>}<button type="button" className="btn primary" onClick={() => { setDone(null); setAmount(""); }}>Done</button></div>
+    <div className="footer">{from && done.hashes.at(-1) && <button type="button" className="btn secondary" onClick={() => { const url = explorerTx(from.asset.network, done.hashes.at(-1)!); if (url) void chrome.tabs.create({ url }); }}><ExternalLink size={16} />View on explorer</button>}<button type="button" className="btn primary" onClick={() => { setDone(null); clear(); }}>Done</button></div>
   </div>;
+  }
 
   if (reviewing && q && from && to) {
     if (!prepared && !prepareError) return <div className="popup"><div className="backdrop" /><PageHead title="Review swap" onBack={() => setReviewing(false)} /><Busy text="Checking the route and its fees…" /></div>;
     const steps = prepared?.steps ?? [];
     const reviewError = prepareError;
     const what = prepared?.gasless ? `${steps.length} authorization${steps.length === 1 ? "" : "s"} you'll sign` : `${steps.length} step${steps.length === 1 ? "" : "s"} you'll sign`;
-    return <div className="popup"><div className="backdrop" />
+    const run = async () => {
+      try {
+        const hashes = await execute(prepared!, setProgress);
+        setProgress("Waiting for Relay…");
+        let state = "pending";
+        if (q.requestId) for (let i = 0; i < 20 && !["success", "failure", "refund"].includes(state); i++) { await new Promise(r => setTimeout(r, 3000)); state = await status(q.requestId).catch(() => state); }
+        setDone({ hashes, state });
+      } catch (e) { setError(message(e)); } finally { setProgress(""); setReviewing(false); }
+    };
+    return <div className="popup confirm-screen" data-testid="swap-review">
       <PageHead title="Review swap" onBack={() => setReviewing(false)} />
-      <div className="scroll stack" style={{ paddingBottom: 130 }}>
-        <h1 className="ask-title" style={{ margin: "4px 2px 0" }}>{amount} {from.asset.symbol} → {q.amountOut} {to.symbol}</h1>
-        <p className="ask-sub" style={{ margin: "0 2px" }}>{networkLabel(from.asset.network)} → {networkLabel(to.network)} · through Relay</p>
-        {(q.impactPercent ?? 0) <= -3 && <div className="alert danger"><AlertTriangle size={17} /><span><b>High price impact: {q.impactPercent?.toFixed(2)}%.</b> You'd get noticeably less than the amount is worth.</span></div>}
-        <div className="card facts">
-          <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to.symbol}</b></div>
-          <div className="fact"><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--positive)" }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
-          <div className="fact"><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
-          <MaxxingFeeRow q={q} />
-          {prepared && (prepared.gasless
-            ? <div className="fact"><span>Network fee</span><b>Paid from the swap · no {prepared.nativeSymbol} needed</b></div>
-            : <div className="fact"><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
-          {q.timeSeconds && <div className="fact"><span>Arrives in</span><b>~ {q.timeSeconds} s</b></div>}
+      <div className="scroll confirm-scroll">
+        {/* What goes in, what comes out: the one thing to look at. */}
+        <div className="confirm-hero swap-hero">
+          <div className="confirm-to">You pay on <b>{networkLabel(from.asset.network)}</b></div>
+          <BigAmount value={amount.replace(/,/g, "")} symbol={from.asset.symbol} />
+          <div className="swap-arrow" aria-hidden="true"><ArrowDown size={16} /></div>
+          <div className="swap-out num" title={q.amountOut}>{nice(q.amountOut)} <span>{to.symbol}</span></div>
+          <div className="confirm-usd">on {networkLabel(to.network)} · through Relay{q.timeSeconds ? ` · ~${q.timeSeconds} s` : ""}</div>
+        </div>
+        <div className="confirm-warnings">
+          {(q.impactPercent ?? 0) <= -3 && <div className="confirm-warn danger"><AlertTriangle size={15} /><span><b>High price impact: {q.impactPercent?.toFixed(2)}%.</b> You'd get noticeably less than the amount is worth.</span></div>}
+          {(reviewError || error) && <div className="confirm-warn danger" role="alert"><AlertTriangle size={15} /><span>{reviewError || error}</span></div>}
         </div>
         <div className="section-head"><h2>{what}</h2></div>
         {steps.map((s, i) => s.kind === "signature"
@@ -133,17 +214,20 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
         <p style={{ fontSize: 11.5, color: "var(--muted)", margin: 0 }}>{prepared?.gasless
           ? "Gasless: you sign an authorization for exactly this amount; Relay sends the transaction and takes the network fee out of the swap."
           : `You pay the network fee in ${from.asset.network.nativeSymbol}.`}</p>
-        {(reviewError || error) && <div className="alert danger" role="alert">{reviewError || error}</div>}
       </div>
-      <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}><div className="btn-row"><button type="button" className="btn secondary" onClick={() => setReviewing(false)}>Back</button><button type="button" className="btn primary" disabled={!!reviewError || !prepared} onClick={async () => {
-        try {
-          const hashes = await execute(prepared!, setProgress);
-          setProgress("Waiting for Relay…");
-          let state = "pending";
-          if (q.requestId) for (let i = 0; i < 20 && !["success", "failure", "refund"].includes(state); i++) { await new Promise(r => setTimeout(r, 3000)); state = await status(q.requestId).catch(() => state); }
-          setDone({ hashes, state });
-        } catch (e) { setError(message(e)); } finally { setProgress(""); setReviewing(false); }
-      }}>Confirm swap</button></div></div>
+      {/* The numbers and the one button, on the same glowing panel as Send. */}
+      <div className="confirm-panel">
+        <div className="confirm-rows">
+          <div><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to.symbol}</b></div>
+          <div><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : undefined }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
+          <div><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
+          <MaxxingFeeRow q={q} />
+          {prepared && (prepared.gasless
+            ? <div><span>Network fee</span><b>Paid from the swap</b></div>
+            : <div><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
+        </div>
+        <HoldButton label="Swap" busyLabel="Swapping…" disabled={!!reviewError || !prepared} onConfirm={run} />
+      </div>
     </div>;
   }
 
@@ -151,38 +235,49 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
     <PageHead title="Swap & bridge" />
     <div className="scroll" style={{ paddingBottom: 150 }}>
       {holdings === null ? <Busy text="Reading balances…" /> : <>
-        <div className="swap-card">
-          <label><span>You pay</span>{from && <span className="num">Balance {from.holding.amount}</span>}</label>
+        <div className={`swap-card${tooMuch ? " over" : ""}`}>
+          <div className="swap-top"><span>You pay</span>{from && <span>on {networkLabel(from.asset.network)}</span>}</div>
           <div className="swap-line">
-            <input className="swap-amount num" style={{ background: "none", border: 0, outline: "none", width: "55%", color: "var(--text)" }} inputMode="decimal" placeholder="0" value={amount} onChange={e => setAmount(e.target.value)} />
-            <select className="swap-asset" style={{ maxWidth: 150 }} value={fromKey} onChange={e => setFromKey(e.target.value)}>
-              <option value="">Choose</option>
-              {fromAssets.map(x => <option key={key(x.asset)} value={key(x.asset)}>{x.asset.symbol} · {networkLabel(x.asset.network)}</option>)}
-            </select>
+            {inUsd && <span className="swap-amount swap-dollar">$</span>}
+            <input className="swap-amount swap-input num" inputMode="decimal" placeholder="0" aria-label={inUsd ? "Amount to pay, in dollars" : "Amount to pay"} data-testid="swap-amount" value={inUsd ? usdText : amount} onChange={e => typed(e.target.value.replace(",", "."))} />
+            <AssetPicker label="You pay" testId="swap-from" value={from ? { key: key(from.asset), symbol: from.asset.symbol, network: from.asset.network } : null}
+              choices={fromAssets.map(x => ({ key: key(x.asset), symbol: x.asset.symbol, network: x.asset.network, balance: x.holding.amount }))} onPick={k => { setFromKey(k); clear(); }} />
           </div>
-          {from && <label style={{ marginTop: 6 }}><span>on {from.asset.network.name}</span><button type="button" style={{ color: "var(--text-2)", fontWeight: 600, fontSize: 12 }} onClick={() => setAmount(from.holding.amount.replace(/,/g, ""))}>Max</button></label>}
+          <div className="swap-sub">
+            {tooMuch ? <span><em>More than you have</em></span> : unitPrice > 0 && from
+              ? <button type="button" className="unit-switch num" data-testid="swap-unit" title={inUsd ? `Type in ${from.asset.symbol}` : "Type in dollars"} onClick={() => { if (!inUsd) setUsdText(dollarsOf(amount)); setInUsd(v => !v); }}><ArrowDownUp size={12} />{other}</button>
+              : <span />}
+            {from && <span className="swap-bal"><span className="num">{from.holding.amount} {from.asset.symbol}</span><button type="button" onClick={() => share(50n)}>50%</button><button type="button" onClick={() => share(100n)}>Max</button></span>}
+          </div>
         </div>
-        <div className="swap-flip"><button type="button" aria-label="Flip" disabled><ArrowDownUp size={16} /></button></div>
+        {/* Between the two: a flip button when you hold the other token too, otherwise just the direction. */}
+        <div className="swap-flip">{canFlip
+          ? <button type="button" aria-label="Flip pay and get" onClick={flip} title="Flip"><ArrowDownUp size={16} /></button>
+          : <span aria-hidden="true"><ArrowDown size={16} /></span>}</div>
         <div className="swap-card">
-          <label><span>You get</span>{quoting ? <span>Finding the best route…</span> : q ? <span style={{ color: "var(--positive)" }}>Route found</span> : null}</label>
+          <div className="swap-top"><span>You get</span>{to && <span>on {networkLabel(to.network)}</span>}</div>
           <div className="swap-line">
-            <span className="swap-amount num">{q ? q.amountOut : "0"}</span>
-            <select className="swap-asset" style={{ maxWidth: 150 }} value={toKey} onChange={e => setToKey(e.target.value)}>
-              <option value="">Choose</option>
-              {toAssets.map(a => <option key={key(a)} value={key(a)}>{a.symbol} · {networkLabel(a.network)}</option>)}
-            </select>
+            <span key={q?.amountOut ?? "none"} className={`swap-amount num${q ? " tick" : " idle"}${quoting ? " pulse" : ""}`}>{q ? nice(q.amountOut) : "0"}</span>
+            <AssetPicker label="You get" testId="swap-to" value={to ? { key: key(to), symbol: to.symbol, network: to.network } : null}
+              choices={toAssets.map(a => ({ key: key(a), symbol: a.symbol, network: a.network, balance: (holdings ?? []).find(h => h.networkId === a.network.networkId && (h.address ?? null)?.toLowerCase() === a.address?.toLowerCase())?.amount }))} onPick={setToKey} />
           </div>
-          {to && <label style={{ marginTop: 6 }}><span>on {to.network.name}{to.network.family === "SOLANA" ? " (to your Solana address)" : ""}</span><span className="num">{q?.amountOutUsd != null ? usd(q.amountOutUsd) : ""}</span></label>}
+          <div className="swap-sub">
+            <span className="num">{q?.amountOutUsd != null ? usd(q.amountOutUsd) : ""}</span>
+            <span className="num">{to ? `You have ${toHeld ?? "0"} ${to.symbol}` : ""}</span>
+          </div>
         </div>
-        {from && to && <div className="card route" style={{ marginTop: 8 }}>
-          <Route size={15} style={{ color: "var(--muted)", flexShrink: 0 }} />
-          <span className="hop">{from.asset.symbol} · {from.asset.network.name}</span><span className="line" /><span className="hop">Relay</span><span className="line" /><span className="hop">{to.symbol} · {to.network.name}</span>
-        </div>}
-        {q && <div className="card facts" style={{ marginTop: 8 }}>
-          <div className="fact"><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--positive)" }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
-          <div className="fact"><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to?.symbol}</b></div>
-          <div className="fact"><span>Relay's fees</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
-          <MaxxingFeeRow q={q} />
+        {/* The details are always here, filled in when the quote arrives, so the screen doesn't jump or sit half empty. */}
+        {from && to && <div className={`card facts swap-facts${q ? " ready" : ""}`} data-testid="swap-facts">
+          <div className="fact"><span>Rate</span><b className="num">{rate ?? dash}</b></div>
+          <div className="fact"><span>{from.asset.network.networkId === to.network.networkId ? "Swap" : "Bridge"} through Relay</span><b>{q?.timeSeconds ? (q.timeSeconds < 5 ? "Arrives in seconds" : `About ${Math.round(q.timeSeconds)} s`) : dash}</b></div>
+          {/* Price impact takes a row only when it's worth a look; the review always shows it. */}
+          {q && (q.impactPercent ?? 0) <= -1 && <div className="fact"><span>Price impact</span><b className="num" style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : "var(--warning)" }}>{q.impactPercent!.toFixed(2)}%</b></div>}
+          <div className="fact"><span>Relay's fees</span><b className="num">{q && q.feesUsd !== null ? usd(q.feesUsd) : dash}</b></div>
+          {q && <MaxxingFeeRow q={q} />}
+          {/* The network fee of your own transaction: an estimate here, the exact ceiling on the review. Dollars first when typing in dollars. */}
+          <div className="fact" data-testid="swap-network-fee"><span>{gasless ? "Network fee" : "Network fee, about"}</span><b className="num">{gasless ? "Paid from the swap" : !q?.networkFee ? dash
+            : inUsd && q.networkFee.usd !== null ? <>{feeText(q.networkFee.usd)} <em>{coins(q.networkFee.amount)} {q.networkFee.symbol}</em></>
+            : <>{coins(q.networkFee.amount)} {q.networkFee.symbol}{q.networkFee.usd !== null && <em> {q.networkFee.usd < 0.01 ? "" : "≈ "}{feeText(q.networkFee.usd)}</em>}</>}</b></div>
         </div>}
         {canGasless && from && <label className="card" style={{ display: "flex", gap: 10, alignItems: "center", padding: 12, marginTop: 8, fontSize: 13, cursor: "pointer" }} data-testid="gasless-toggle">
           <input type="checkbox" checked={gasless} onChange={e => setGaslessChoice(e.target.checked)} />
@@ -191,7 +286,7 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
         {!fromAssets.length && <div className="card empty" style={{ marginTop: 8 }}>Swaps start from a token on an EVM chain. Receive some first; Solana as the source comes next.</div>}
         {error && <div className="alert danger" role="alert" style={{ marginTop: 8 }}>{error}</div>}      </>}
     </div>
-    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 72 }}><button type="button" className="btn primary" disabled={!q} onClick={() => setReviewing(true)}>Review swap</button></div>
+    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 72 }}><button type="button" className="btn primary" data-testid="swap-review-btn" disabled={!q || tooMuch || quoting} onClick={() => setReviewing(true)}>{action}</button></div>
     <Dock tab="swap" onTab={onTab} />
   </div>;
 }

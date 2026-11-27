@@ -358,7 +358,8 @@ test("swap fee: from admin's public config, capped at 2%; off or without a recip
     const url = String(input);
     if (url.endsWith("/v1/config")) return new Response(JSON.stringify({ values: cfg({}) }));
     sent = JSON.parse(String(init?.body));
-    return new Response(JSON.stringify({ steps: [], fees: { app: { amount: appUsd === "0" ? "0" : "1", amountUsd: appUsd, currency: { address: "0x0" } } },
+    return new Response(JSON.stringify({ steps: [], fees: { app: { amount: appUsd === "0" ? "0" : "1", amountUsd: appUsd, currency: { address: "0x0" } },
+        gas: { amountFormatted: "0.00002", amountUsd: "0.05", currency: { symbol: "ETH" } }, relayer: { amountUsd: "0.3" } },
       details: { recipient: user, currencyIn: { amountUsd: "1000" }, currencyOut: { amountFormatted: "1000", currency: { chainId: 8453, address: USDC, decimals: 6 } } } }));
   }) as typeof fetch;
   try {
@@ -367,6 +368,8 @@ test("swap fee: from admin's public config, capped at 2%; off or without a recip
     const q = await relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user });
     assert.deepEqual(sent.appFees, [{ recipient: R, fee: "85" }]);
     assert.deepEqual(q.maxxingFee, { bps: 85, usd: 8.5 });
+    assert.deepEqual(q.networkFee, { amount: 0.00002, symbol: "ETH", usd: 0.05 }, "your own transaction's network fee, on its own line");
+    assert.equal(q.feesUsd, 0.3, "Relay's fees are what comes out of the price, not the network fee on top");
     appUsd = "12";
     await assert.rejects(relay.quote({ from: eth, to: usdc, amountRaw: 10n ** 18n, user, recipient: user }), /more than the MAXXING fee shown/);
     appUsd = "0";

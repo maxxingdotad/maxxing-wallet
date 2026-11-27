@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, BadgeCheck, Check, ChevronDown, Eye, EyeOff, Plus, SlidersHorizontal } from "lucide-react";
 import { ChainLogo, TokenLogo } from "../ui/logos";
 import { usd, type Holding } from "../ui/parts";
@@ -18,13 +19,26 @@ export function NetworkButton({ selected, onOpen }: { selected: string; onOpen: 
   </button>;
 }
 
-/** Every network from the registry (test networks only when turned on), plus "All networks". */
-export function NetworkSheet({ selected, showTestnets, onPick, onClose }: { selected: string; showTestnets: boolean; onPick: (networkId: string) => void; onClose: () => void }) {
-  const list = networks(showTestnets);
+/** A form's network field: the chosen network with its logo; a tap opens the network sheet (never the system's dropdown). */
+export function NetworkField({ network, onOpen, testId, label = "Network" }: { network: Network | null; onOpen: () => void; testId?: string; label?: string }) {
+  return <button type="button" className="asset-field network-field" data-testid={testId} data-network={network?.networkId ?? ""} onClick={onOpen} aria-haspopup="dialog" aria-label={`${label}: ${network ? networkLabel(network) : "choose"}`}>
+    {network ? <ChainLogo networkId={network.networkId} name={network.name} size={26} /> : <span className="dot" style={{ width: 26, height: 26, borderRadius: 999, background: "var(--surface-3)" }} />}
+    <span className="main"><b>{network?.name ?? "Choose a network"}</b>{network && <small>{network.testnet ? "Test network" : `Fees in ${network.nativeSymbol}`}</small>}</span>
+    <ChevronDown size={16} className="chev" />
+  </button>;
+}
+
+/**
+ * Every network from the registry (test networks only when turned on), plus "All networks". With `only`, the sheet chooses one
+ * network from that list (no "All networks").
+ */
+export function NetworkSheet({ selected, showTestnets, onPick, onClose, only }: { selected: string; showTestnets: boolean; onPick: (networkId: string) => void; onClose: () => void; only?: Network[] }) {
+  const list = only ?? networks(showTestnets);
   const [query, setQuery] = useState("");
   const shown = list.filter(n => n.name.toLowerCase().includes(query.trim().toLowerCase()));
   useEscape(onClose);
-  return <>
+  // Drawn at the top of the popup, so it is never under a screen's bottom button or clipped by a scrolling list.
+  return createPortal(<>
     <div className="scrim" onClick={onClose} />
     <section className="sheet" role="dialog" aria-modal="true" aria-label="Choose a network">
       <div className="grab" />
@@ -32,7 +46,7 @@ export function NetworkSheet({ selected, showTestnets, onPick, onClose }: { sele
       <div style={{ padding: "0 12px 8px" }}><input className="search" autoFocus value={query} onChange={e => setQuery(e.target.value)} placeholder="Search networks" aria-label="Search networks" /></div>
       <div style={{ overflowY: "auto", padding: "0 12px 12px" }}>
         <div className="card rows">
-          {!query && <button type="button" className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => onPick("all")}>
+          {!query && !only && <button type="button" className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => onPick("all")}>
             <span className="dot" style={{ width: 24, height: 24, borderRadius: 999, background: "conic-gradient(#A36AFF, #3FD5F5, #E8E4DC, #A36AFF)" }} />
             <div className="main"><b>All networks</b><small>{list.length} networks</small></div>
             {selected === "all" && <Check size={16} style={{ color: "var(--text)" }} />}
@@ -43,10 +57,11 @@ export function NetworkSheet({ selected, showTestnets, onPick, onClose }: { sele
             {selected === n.networkId && <Check size={16} />}
           </button>)}
         </div>
-        {!showTestnets && <p style={{ fontSize: 11.5, color: "var(--dim)", margin: "8px 4px 0" }}>Test networks are hidden. Turn them on in Settings.</p>}
+        {!shown.length && <p className="empty-hint">No network matches “{query}”.</p>}
+        {!showTestnets && !only && <p style={{ fontSize: 11.5, color: "var(--dim)", margin: "8px 4px 0" }}>Test networks are hidden. Turn them on in Settings.</p>}
       </div>
     </section>
-  </>;
+  </>, document.querySelector(".popup") ?? document.body);
 }
 
 /** The trust mark next to a token: verified (the registry names it), or unverified. */
@@ -141,8 +156,11 @@ async function readToken(n: Network, address: string): Promise<{ symbol: string;
 
 function AddToken({ shown, onBack, onAdd }: { shown: Network[]; onBack: () => void; onAdd: (ref: AssetRef) => Promise<void> }) {
   const [networkId, setNetworkId] = useState(shown[0]?.networkId ?? "");
+  const [picking, setPicking] = useState(false);
   const [address, setAddress] = useState(""), [found, setFound] = useState<AssetRef | null>(null), [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  const n = shown.find(x => x.networkId === networkId);
+  // Any network can be chosen, not only the one the home screen is filtered to (it starts on that one).
+  const choices = useMemo(() => networks(shown.some(x => x.testnet)), [shown]);
+  const n = choices.find(x => x.networkId === networkId);
   const trust = found && n ? trustOf(found, verifiedAssets([n])) : null;
   return <div className="popup"><div className="backdrop" />
     <PageHead title="Add a token" onBack={onBack} />
@@ -151,7 +169,7 @@ function AddToken({ shown, onBack, onAdd }: { shown: Network[]; onBack: () => vo
       try { const t = await readToken(n, address.trim()); setFound({ networkId, address: address.trim(), symbol: t.symbol, name: t.symbol, decimals: t.decimals }); } catch (err) { setError(message(err)); } finally { setBusy(false); }
     }}>
       <div className="alert warn"><AlertTriangle size={16} /><span><b>Anyone can make a token with any name.</b> Add only a token you got from a source you trust. A token here isn't checked by MAXXING.</span></div>
-      <label className="field">Network<select value={networkId} onChange={e => { setNetworkId(e.target.value); setFound(null); }}>{shown.map(x => <option key={x.networkId} value={x.networkId}>{x.name}</option>)}</select></label>
+      <div className="field">Network<NetworkField network={n ?? null} onOpen={() => setPicking(true)} testId="add-token-network" /></div>
       <label className="field">Token address<input value={address} onChange={e => { setAddress(e.target.value); setFound(null); }} placeholder={n?.family === "SOLANA" ? "Mint address" : "0x…"} spellCheck={false} autoComplete="off" /></label>
       {busy && <Busy text="Reading the token…" />}
       {error && <div className="alert danger" role="alert">{error}</div>}
@@ -159,5 +177,6 @@ function AddToken({ shown, onBack, onAdd }: { shown: Network[]; onBack: () => vo
       {!found ? <button type="submit" className="btn secondary" disabled={!address.trim() || busy}>Look it up</button>
         : <button type="button" className="btn primary" onClick={() => void onAdd(found)}>Add {found.symbol}</button>}
     </form>
+    {picking && <NetworkSheet only={choices} selected={networkId} showTestnets onClose={() => setPicking(false)} onPick={id => { setNetworkId(id); setFound(null); setPicking(false); }} />}
   </div>;
 }

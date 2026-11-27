@@ -112,7 +112,7 @@ test("Solana transactions: read, summarised and signed in the right slot", async
   assert.equal(parsed.feePayer, signer);
   assert.deepEqual(parsed.transfers, [{ from: signer, to: bs58.encode(other.publicKey), lamports: 1_500_000_000n }]);
   const summary = solanaSummary(tx, signer);
-  assert.deepEqual(summary.rows[0], [`Send to ${bs58.encode(other.publicKey).slice(0, 6)}…${bs58.encode(other.publicKey).slice(-4)}`, "1.5 SOL"]);
+  assert.deepEqual(summary.rows.slice(0, 2), [["Send", "1.5 SOL"], ["To", bs58.encode(other.publicKey)]], "the recipient is shown in full");
   assert.throws(() => solanaSummary(tx, bs58.encode(other.publicKey)), /SIGNER_NOT_IN_TRANSACTION/);
   const signed = await signSolanaTransaction(tx, signer, bytes => nacl.sign.detached(bytes, pair.secretKey));
   assert.ok(nacl.sign.detached.verify(message, signed.subarray(1, 65), pair.publicKey));
@@ -150,14 +150,15 @@ const call = (to: string, data: `0x${string}`) => transactionSummary({ chainId: 
 
 test("token approvals say who may spend what, and warn when there's no limit", () => {
   const limited = call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, 5_000_000n] }));
-  assert.deepEqual(limited.tokenCall, { text: "Lets 0x1111…1111 spend your USDC: 5 USDC", warning: null });
-  for (const amount of [maxUint256, 2n ** 255n]) {
+  assert.deepEqual(limited.tokenCall, { text: "Lets 0x1111…1111 spend your USDC: 5 USDC", warning: null, party: ["Spender", SPENDER] });
+  assert.deepEqual(limited.rows[0], ["Spender", SPENDER], "the spender is shown in full");
+  for (const amount of [maxUint256, 2n ** 255n, 2n ** 200n, maxUint160]) {
     const unlimited = call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, amount] }));
     assert.equal(unlimited.tokenCall?.text, "Lets 0x1111…1111 spend all your USDC, now and later");
     assert.match(unlimited.tokenCall?.warning ?? "", /no limit/);
   }
-  assert.equal(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, 2n ** 255n - 1n] })).tokenCall?.warning, null, "just under 2^255 is a stated amount");
-  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, 0n] })).tokenCall, { text: "Removes 0x1111…1111's permission to spend your USDC", warning: null });
+  assert.equal(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, maxUint160 - 1n] })).tokenCall?.warning, null, "just under 2^160 is a stated amount");
+  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "approve", args: [SPENDER, 0n] })).tokenCall, { text: "Removes 0x1111…1111's permission to spend your USDC", warning: null, party: ["Spender", SPENDER] });
   const increased = call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "increaseAllowance", args: [SPENDER, maxUint256] }));
   assert.equal(increased.tokenCall?.text, "Lets 0x1111…1111 spend all your USDC, now and later");
   assert.ok(increased.tokenCall?.warning);
@@ -166,8 +167,8 @@ test("token approvals say who may spend what, and warn when there's no limit", (
 });
 
 test("token sends show the amount and the recipient", () => {
-  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "transfer", args: [RECIPIENT, 12_340_000n] })).tokenCall, { text: "Send 12.34 USDC to 0x2222…2222", warning: null });
-  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "transferFrom", args: [SPENDER, RECIPIENT, 1n] })).tokenCall, { text: "Send 0.000001 USDC to 0x2222…2222", warning: null });
+  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "transfer", args: [RECIPIENT, 12_340_000n] })).tokenCall, { text: "Send 12.34 USDC to 0x2222…2222", warning: null, party: ["Recipient", RECIPIENT] });
+  assert.deepEqual(call(USDC_BASE, encodeFunctionData({ abi: tokenAbi, functionName: "transferFrom", args: [SPENDER, RECIPIENT, 1n] })).tokenCall, { text: "Send 0.000001 USDC to 0x2222…2222", warning: null, party: ["Recipient", RECIPIENT] });
   assert.equal(call(UNKNOWN_TOKEN, encodeFunctionData({ abi: tokenAbi, functionName: "transfer", args: [RECIPIENT, 1234n] })).tokenCall?.text, "Send 1234 units of token 0x3333…3333 to 0x2222…2222");
 });
 
@@ -175,14 +176,14 @@ test("collection-wide approvals warn; revoking them doesn't", () => {
   const granted = call(UNKNOWN_TOKEN, encodeFunctionData({ abi: tokenAbi, functionName: "setApprovalForAll", args: [SPENDER, true] }));
   assert.equal(granted.tokenCall?.text, "Lets 0x1111…1111 move all your items in this collection");
   assert.match(granted.tokenCall?.warning ?? "", /every item/);
-  assert.deepEqual(call(UNKNOWN_TOKEN, encodeFunctionData({ abi: tokenAbi, functionName: "setApprovalForAll", args: [SPENDER, false] })).tokenCall, { text: "Removes 0x1111…1111's access to your items in this collection", warning: null });
+  assert.deepEqual(call(UNKNOWN_TOKEN, encodeFunctionData({ abi: tokenAbi, functionName: "setApprovalForAll", args: [SPENDER, false] })).tokenCall, { text: "Removes 0x1111…1111's access to your items in this collection", warning: null, party: ["Operator", SPENDER] });
 });
 
 test("Permit2 approvals read like token approvals", () => {
   const unlimited = call(PERMIT2_ADDRESS, encodeFunctionData({ abi: permit2Abi, functionName: "approve", args: [USDC_BASE, SPENDER, maxUint160, 0] }));
   assert.equal(unlimited.tokenCall?.text, "Lets 0x1111…1111 spend all your USDC, now and later");
   assert.ok(unlimited.tokenCall?.warning);
-  assert.deepEqual(call(PERMIT2_ADDRESS, encodeFunctionData({ abi: permit2Abi, functionName: "approve", args: [USDC_BASE, SPENDER, 2_500_000n, 0] })).tokenCall, { text: "Lets 0x1111…1111 spend your USDC: 2.5 USDC", warning: null });
+  assert.deepEqual(call(PERMIT2_ADDRESS, encodeFunctionData({ abi: permit2Abi, functionName: "approve", args: [USDC_BASE, SPENDER, 2_500_000n, 0] })).tokenCall, { text: "Lets 0x1111…1111 spend your USDC: 2.5 USDC", warning: null, party: ["Spender", SPENDER] });
   // Other Permit2 calls are not decoded.
   assert.equal(call(PERMIT2_ADDRESS, encodeFunctionData({ abi: permit2Abi, functionName: "lockdown", args: [[]] })).tokenCall, null);
 });
@@ -257,9 +258,48 @@ test("closing a token account says where its leftover SOL goes", () => {
 test("unknown programs and malformed token data stay under other actions", () => {
   const pair = nacl.sign.keyPair(), me = bs58.encode(pair.publicKey), program = someone(), account = someone();
   const unknown = solanaSummary(tokenTx(pair.publicKey, [account], [{ program, accounts: [account], data: [12, 1, 2] }, { program: TOKEN, accounts: [account, me], data: [3, 1, 2] }]), me);
-  assert.deepEqual(unknown.actions, []);
+  // What the wallet can't read is said in words, naming the programs.
+  assert.equal(unknown.actions.length, 1);
+  assert.match(unknown.actions[0]!.text, /can't read/);
   assert.equal(unknown.otherInstructions, 2);
   assert.ok(unknown.rows.some(([label]) => label === "Other actions"));
+  // Fee settings and memos can't move anything: no notice for them.
+  const quiet = solanaSummary(tokenTx(pair.publicKey, [account], [{ program: "ComputeBudget111111111111111111111111111111", accounts: [], data: [2, 1, 0, 0, 0] }]), me);
+  assert.deepEqual(quiet.actions, []);
+});
+
+test("a padded or widened instruction is still read as what it is", () => {
+  const pair = nacl.sign.keyPair(), me = bs58.encode(pair.publicKey), source = someone(), destination = someone(), spare = someone();
+  const SYSTEM = "11111111111111111111111111111111";
+  // A SOL transfer with a third account and a trailing byte: the System Program runs it as a transfer, so it shows as one.
+  const sol = solanaSummary(tokenTx(pair.publicKey, [destination, spare], [{ program: SYSTEM, accounts: [me, destination, spare], data: [2, 0, 0, 0, ...u64(5_000_000_000n), 0] }]), me);
+  assert.deepEqual(sol.transfers, [{ from: me, to: destination, lamports: 5_000_000_000n }]);
+  assert.deepEqual(sol.rows.slice(0, 2), [["Send", "5 SOL"], ["To", destination]]);
+  // A token transfer and an approval with one extra byte.
+  const sent = solanaSummary(tokenTx(pair.publicKey, [source, destination], [{ program: TOKEN, accounts: [source, destination, me], data: [3, ...u64(42n), 0] }]), me);
+  assert.match(sent.actions[0]!.text, /^Send 42 token units/);
+  const approved = solanaSummary(tokenTx(pair.publicKey, [source, destination], [{ program: TOKEN, accounts: [source, destination, me], data: [4, ...u64(7n), 0] }]), me);
+  assert.match(approved.actions[0]!.warning ?? "", /trust/);
+  // Handing the whole account to another program is the strongest warning there is.
+  const owner = nacl.sign.keyPair().publicKey;
+  const assigned = solanaSummary(tokenTx(pair.publicKey, [], [{ program: SYSTEM, accounts: [me], data: [1, 0, 0, 0, ...owner] }]), me);
+  assert.match(assigned.actions[0]!.text, /^Hands your whole account/);
+  assert.match(assigned.actions[0]!.warning ?? "", /emptied/);
+});
+
+test("typed data: a no-limit amount is said in words, and only signed domain fields are shown", () => {
+  const types = { Permit: [{ name: "owner", type: "address" }, { name: "spender", type: "address" }, { name: "value", type: "uint256" }, { name: "deadline", type: "uint256" }] };
+  const max = (2n ** 256n - 1n).toString();
+  const permit = typedDataSummary({ domain: { name: "USD Coin", chainId: 8453, verifyingContract: USDC_BASE }, types, primaryType: "Permit", message: { owner: "0x1", spender: "0x2", value: max, deadline: max } });
+  assert.equal(permit.unlimited, true);
+  assert.deepEqual(permit.rows[2], ["value", "No limit (the maximum amount)"]);
+  assert.deepEqual(permit.rows[3], ["deadline", max], "a far-off deadline is not an amount");
+  assert.equal(typedDataSummary({ domain: {}, types, primaryType: "Permit", message: { owner: "0x1", spender: "0x2", value: "1000000", deadline: "1" } }).unlimited, false);
+  // The request lists the domain's fields itself and leaves the network and contract out: they aren't signed, so they aren't shown.
+  const partial = typedDataSummary({ domain: { name: "USD Coin", chainId: 8453, verifyingContract: USDC_BASE }, types: { ...types, EIP712Domain: [{ name: "name", type: "string" }] }, primaryType: "Permit", message: { owner: "0x1", spender: "0x2", value: "1", deadline: "1" } });
+  assert.equal(partial.app, "USD Coin");
+  assert.equal(partial.network, null);
+  assert.equal(partial.contract, null);
 });
 
 test("transactions: what is shown is what is signed; anything read differently is refused", () => {

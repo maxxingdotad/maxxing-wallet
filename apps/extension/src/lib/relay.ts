@@ -29,6 +29,8 @@ export type Quote = {
   requestId: string | null; steps: RelayStep[]; amountRaw: bigint; gasless: boolean; fromChainId: number; toChainId: number;
   amountIn: string; amountOut: string; minimumOut: string | null; amountOutUsd: number | null; amountInUsd: number | null;
   impactPercent: number | null; timeSeconds: number | null; feesUsd: number | null; rate: string | null;
+  /** Relay's estimate of the network fee for your own transaction, in the network's coin (null: gasless, or not given). */
+  networkFee: { amount: number; symbol: string; usd: number | null } | null;
   /** MAXXING's fee on this swap (null: none), checked against the quote: its rate in basis points and its value in dollars. */
   maxxingFee: { bps: number; usd: number | null } | null;
 };
@@ -72,8 +74,11 @@ export async function quote(input: { from: Asset; to: Asset; amountRaw: bigint; 
     minimumOut: out?.minimumAmount != null && out?.currency?.decimals != null ? (Number(out.minimumAmount) / 10 ** out.currency.decimals).toPrecision(6) : null,
     amountOutUsd: num(out?.amountUsd), amountInUsd: num(inn?.amountUsd),
     impactPercent: num(raw?.details?.totalImpact?.percent), timeSeconds: num(raw?.details?.timeEstimate),
-    // Relay's own fees (network and relayer); MAXXING's fee is shown on its own line.
-    feesUsd: ["gas", "relayer"].reduce<number | null>((sum, k) => { const v = num(raw?.fees?.[k]?.amountUsd); return v === null ? sum : (sum ?? 0) + v; }, null),
+    // Relay's own fees, taken out of the price; MAXXING's fee is shown on its own line. The network fee of your own transaction
+    // is its own figure (networkFee), except gasless, where Relay pays it and takes it out of the swap with the rest.
+    feesUsd: (gasless ? ["gas", "relayer"] : ["relayer"]).reduce<number | null>((sum, k) => { const v = num(raw?.fees?.[k]?.amountUsd); return v === null ? sum : (sum ?? 0) + v; }, null),
+    networkFee: gasless || num(raw?.fees?.gas?.amountFormatted) === null ? null
+      : { amount: num(raw.fees.gas.amountFormatted)!, symbol: String(raw.fees.gas.currency?.symbol ?? input.from.network.nativeSymbol), usd: num(raw.fees.gas.amountUsd) },
     rate: raw?.details?.rate != null ? String(raw.details.rate) : null,
     maxxingFee: fee ? { bps: fee.bps, usd: feeUsd } : null,
   };

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { Globe, Unplug } from "lucide-react";
+import { ChevronDown, Globe, Unplug } from "lucide-react";
 import { ChainLogo } from "../ui/logos";
+import { NetworkSheet } from "./Assets";
 import { short } from "../ui/parts";
 import { PageHead } from "./kit";
 import { activity, settings as settingsStore, sites as siteStore, type SitePermission } from "../lib/store";
@@ -21,6 +22,7 @@ function accountNamed(snap: wallet.WalletSnapshot, evm: string) {
 export function ConnectedSites({ snap, onBack, toast }: { snap: wallet.WalletSnapshot; onBack: () => void; toast: (t: string) => void }) {
   const [list, setList] = useState<SitePermission[] | null>(null);
   const [testnets, setTestnets] = useState(false);
+  const [picking, setPicking] = useState<SitePermission | null>(null);
   useEffect(() => { void siteStore.all().then(setList); void settingsStore.read().then(s => setTestnets(s.showTestnets)); }, []);
   const evm = networks(testnets).filter(n => n.family === "EVM" && n.evmChainId);
   const refresh = async () => { await wallet.announce(); setList(await siteStore.all()); };
@@ -36,21 +38,20 @@ export function ConnectedSites({ snap, onBack, toast }: { snap: wallet.WalletSna
             <span className="favicon" style={{ width: 32, height: 32, borderRadius: 9, background: "var(--surface-3)", display: "grid", placeItems: "center", fontWeight: 700 }}>{host[0]!.toUpperCase()}</span>
             <div className="main"><b style={{ overflowWrap: "anywhere" }}>{host}</b><small className="num">{accountNamed(snap, s.evm)} · last used {new Date(s.lastUsedAt).toLocaleDateString()}</small></div>
             <button type="button" className="icon-btn small" aria-label={`Disconnect ${host}`} onClick={() => void disconnect(s.origin)}><Unplug size={15} /></button>
-            <label className="site-network">
-              {chain ? <ChainLogo networkId={chain.networkId} name={chain.name} size={18} /> : <span style={{ width: 18 }} />}
-              <select aria-label={`Network for ${host}`} value={s.chainId ?? ""} onChange={async e => {
-                const chainId = Number(e.target.value), next = evmNetwork(chainId);
-                if (!next) return;
-                await siteStore.setChain(s.origin, chainId);
-                await activity.add({ kind: "connect", text: `Switched the site to ${next.name}`, site: s.origin, networkId: next.networkId });
-                await refresh(); toast(`${host} is on ${next.name}`);
-              }}>
-                {!s.chainId && <option value="">The site's choice</option>}
-                {evm.map(n => <option key={n.networkId} value={n.evmChainId}>{networkLabel(n)}</option>)}
-              </select>
-            </label>
+            <button type="button" className="site-network" data-testid="site-network" data-chain={s.chainId ?? ""} aria-haspopup="dialog" aria-label={`Network for ${host}: ${chain ? networkLabel(chain) : "the site's choice"}. Change`} onClick={() => setPicking(s)}>
+              {chain ? <ChainLogo networkId={chain.networkId} name={chain.name} size={18} /> : <Globe size={16} />}
+              <span>{chain ? networkLabel(chain) : "The site's choice"}</span><ChevronDown size={14} />
+            </button>
           </div>;
         })}</div>
+        {picking && <NetworkSheet only={evm} showTestnets selected={evm.find(n => n.evmChainId === picking.chainId)?.networkId ?? ""} onClose={() => setPicking(null)} onPick={async networkId => {
+          const next = evm.find(n => n.networkId === networkId), site = picking, host = new URL(site.origin).host;
+          setPicking(null);
+          if (!next?.evmChainId) return;
+          await siteStore.setChain(site.origin, next.evmChainId);
+          await activity.add({ kind: "connect", text: `Switched the site to ${next.name}`, site: site.origin, networkId: next.networkId });
+          await refresh(); toast(`${host} is on ${next.name}`);
+        }} />}
         <button type="button" className="btn secondary" style={{ marginTop: 12 }} onClick={async () => { for (const s of list) await siteStore.revoke(s.origin); await activity.add({ kind: "revoke", text: `Disconnected all ${list.length} sites` }); await refresh(); toast("All sites disconnected"); }}>Disconnect all</button>
       </>}
     </div>

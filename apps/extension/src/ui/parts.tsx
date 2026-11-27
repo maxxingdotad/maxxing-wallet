@@ -1,5 +1,7 @@
 import { useEffect, useId, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Clock3, House, Settings } from "lucide-react";
+import { KNOWN_SOLANA_MINTS, knownTokens } from "@maxxing/wallet-core/chains";
+import { ChainLogo, TokenLogo } from "./logos";
 
 /** A chain as the screens show it: a logo when the repo has one, else its initial on its color. */
 export type ChainMark = { id: string; name: string; color: string; logo?: string };
@@ -11,6 +13,8 @@ export type Holding = {
 export type Account = { id: string; name: string; color: string; evm: string; solana: string; usd: number; hidden?: boolean; kind?: "phrase" | "imported" };
 
 export const short = (address: string) => `${address.slice(0, 6)}…${address.slice(-4)}`;
+/** A typed amount as a plain decimal the amount parser accepts (8 significant digits, never `1e-8` or `1e+21`). */
+export const plainDecimal = (value: number) => value.toLocaleString("en-US", { useGrouping: false, maximumSignificantDigits: 8 });
 export const usd = (value: number, digits = 2) => value.toLocaleString("en-US", { style: "currency", currency: "USD", minimumFractionDigits: digits, maximumFractionDigits: digits });
 
 export function ChainDot({ chain, size = 16 }: { chain: ChainMark; size?: number }) {
@@ -20,7 +24,15 @@ export function ChainDot({ chain, size = 16 }: { chain: ChainMark; size?: number
 }
 
 /** A token logo with its chain as a small badge, the way the MAXXING app shows holdings. */
-export function TokenMark({ holding }: { holding: Pick<Holding, "symbol" | "logo" | "color" | "chain"> }) {
+export function TokenMark({ holding }: { holding: Pick<Holding, "symbol" | "logo" | "color" | "chain"> & Partial<Pick<Holding, "address" | "networkId">> }) {
+  // A real holding: the same bundled logos as everywhere else (the brand's only for a coin or a token the registry lists),
+  // with its network as a round badge.
+  const networkId = holding.networkId ?? (holding.chain.id.includes(":") ? holding.chain.id : null);
+  if (networkId && !holding.logo) {
+    const address = holding.address ?? null;
+    const listed = !address || (networkId.startsWith("solana:") ? address in KNOWN_SOLANA_MINTS : knownTokens(networkId).some(t => t.address.toLowerCase() === address.toLowerCase()));
+    return <span className="token-stack lg"><TokenLogo symbol={holding.symbol} size={38} verified={listed} /><span className="badge-logo"><ChainLogo networkId={networkId} name={holding.chain.name} size={16} /></span></span>;
+  }
   return <span className="token">
     {holding.logo ? <img className="logo" src={holding.logo} alt="" />
       : <span className="logo" style={{ background: holding.color ?? "var(--surface-3)", color: /^USD/.test(holding.symbol) ? "#fff" : "#141518", fontSize: /^USD/.test(holding.symbol) ? 17 : undefined }}>{/^USD/.test(holding.symbol) ? "$" : holding.symbol.slice(0, 2)}</span>}
@@ -76,7 +88,7 @@ export function Orbit({ total, change, shares, note, hidden }: { total: number; 
     </svg>
     <div className="orbit-center">
       <small>One balance · {shares.length} chains</small>
-      <div className="balance num" data-testid="total">{hidden ? "$••••" : <>{whole}<span className="cents">.{cents}</span></>}</div>
+      <div className="balance num" data-testid="total">{hidden ? "$••••" : <><Rolling text={whole!} /><span className="cents"><Rolling text={`.${cents}`} /></span></>}</div>
       {change !== null
         ? <span className={`delta ${change >= 0 ? "up" : "down"}`}>{change >= 0 ? "▲" : "▼"} {Math.abs(change).toFixed(2)}% today</span>
         : note ? <span className="delta" style={{ color: "var(--muted)", background: "var(--surface-2)" }}>{note}</span> : null}
@@ -84,8 +96,27 @@ export function Orbit({ total, change, shares, note, hidden }: { total: number; 
   </div>;
 }
 
+/**
+ * A number whose digits roll into place like an odometer when it changes (and once when it first shows). Screen readers and copy
+ * get the plain text; the rolling columns are decoration. Under reduced motion the digits simply change.
+ */
+export function Rolling({ text }: { text: string }) {
+  const [shown, setShown] = useState(false);
+  useEffect(() => { const raf = requestAnimationFrame(() => setShown(true)); return () => cancelAnimationFrame(raf); }, []);
+  const chars = [...text];
+  return <span className="rolling"><span className="sr-only">{text}</span><span aria-hidden="true">{chars.map((c, i) => {
+    // Keyed from the right, so a total gaining a digit keeps its other columns in place.
+    const key = chars.length - i;
+    if (!/\d/.test(c)) return <span key={`s${key}`} className="roll-static">{c}</span>;
+    return <span key={key} className="roll"><span className="roll-strip" style={{ transform: `translateY(-${shown ? Number(c) * 10 : 0}%)`, transitionDelay: `${(chars.length - i) * 35}ms` }}>
+      {"0123456789".split("").map(d => <span key={d}>{d}</span>)}
+    </span></span>;
+  })}</span></span>;
+}
+
 export type DockTab = "home" | "swap" | "activity" | "settings";
 /** The floating glass dock from the mobile app, with the violet glow gliding to the open tab. */
+let lastDockIndex = 0;
 export function Dock({ tab, onTab }: { tab: DockTab; onTab?: (tab: DockTab) => void }) {
   const tabs: { id: DockTab; label: string; icon: ReactNode }[] = [
     { id: "home", label: "Home", icon: <House size={21} strokeWidth={1.7} /> },
@@ -94,7 +125,11 @@ export function Dock({ tab, onTab }: { tab: DockTab; onTab?: (tab: DockTab) => v
     { id: "settings", label: "Settings", icon: <Settings size={21} strokeWidth={1.7} /> },
   ];
   const index = tabs.findIndex(t => t.id === tab);
-  return <nav className="dock" aria-label="Wallet" style={{ ["--glow" as string]: `${(index - 1.5) * 100}%` }}>
+  // Each screen draws its own dock, so the pill starts where the last one left it and slides to this screen's tab.
+  const [at, setAt] = useState(lastDockIndex);
+  useEffect(() => { lastDockIndex = index; const frame = requestAnimationFrame(() => setAt(index)); return () => cancelAnimationFrame(frame); }, [index]);
+  return <nav className="dock" aria-label="Wallet" style={{ ["--glow" as string]: `${(index - 1.5) * 100}%`, ["--at" as string]: at }}>
+    <span className="dock-thumb" aria-hidden="true" />
     {tabs.map(t => <button key={t.id} type="button" className={`tab${t.id === tab ? " on" : ""}`} aria-label={t.label} aria-current={t.id === tab ? "page" : undefined} onClick={() => onTab?.(t.id)}>
       {t.id === "home" ? <img src="/brand/cap-neutral.webp" alt="" /> : t.icon}
     </button>)}

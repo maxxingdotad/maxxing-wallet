@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>MAXXING Wallet · dev</title>
+    <style>
+      /* Development only: the popup at its real size, centred, like it sits under the toolbar. */
+      body.dev-host[data-mode="popup"] { min-height: 100vh; margin: 0; display: grid; place-items: center; background: #111; }
+      .dev-stage { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+      .dev-bar { display: flex; flex-direction: column; align-items: center; gap: 4px; font: 12px/1.4 system-ui, sans-serif; color: #9a9aa3; text-align: center; }
+      .dev-bar b { color: #fff; font-weight: 600; }
+      .dev-bar a { color: #c9b6ff; text-decoration: none; }
+      body[data-mode="tab"] .dev-bar { position: fixed; z-index: 50; top: 8px; right: 12px; align-items: flex-end; }
+      .dev-frame { width: 360px; height: 600px; position: relative; overflow: hidden; border-radius: 12px; box-shadow: 0 0 0 1px #2a2a2e, 0 30px 80px rgb(0 0 0 / .6); }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/dev/main.tsx"></script>
+  </body>
+</html>

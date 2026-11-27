@@ -6,12 +6,13 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 /**
  * The extension's pages: popup.html (toolbar popup, also the full tab), sidepanel.html (Chrome's side panel), approve.html (site
- * requests), offscreen.html (Chrome: empties the clipboard after a secret was copied). design.html is the design gallery, served while developing only. The background, content and in-page scripts are
+ * requests), offscreen.html (Chrome: empties the clipboard after a secret was copied). Served while developing only: design.html (the design
+ * gallery) and dev.html (the real wallet in a normal tab with live reload, `pnpm dev` then http://localhost:8085/dev.html). The background, content and in-page scripts are
  * built by scripts/build.mjs, one self-contained file each, as Chrome requires.
  */
 export default defineConfig(({ command }) => {
   const input: Record<string, string> = { popup: resolve(here, "popup.html"), sidepanel: resolve(here, "sidepanel.html"), approve: resolve(here, "approve.html"), offscreen: resolve(here, "offscreen.html") };
-  if (command !== "build") input.design = resolve(here, "design.html");
+  if (command !== "build") { input.design = resolve(here, "design.html"); input.dev = resolve(here, "dev.html"); }
   return {
     // JSX compiles without the React plugin: extension pages allow no inline scripts, so no dev preamble either.
     esbuild: { jsx: "automatic" },

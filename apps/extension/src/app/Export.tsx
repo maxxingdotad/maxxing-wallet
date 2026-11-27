@@ -45,10 +45,10 @@ export function HoldReveal({ title, words, secrets, step, onBack, onDone, doneLa
       </div>)}
       {shown && <div className="timer"><Clock3 size={13} /> Hides again in {left}s · <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setHeld(0)}>Hide now</button></div>}
     </div>
-    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
+    <div className={shown ? "footer" : "footer glow-panel"} style={shown ? { position: "absolute", left: 0, right: 0, bottom: 0 } : undefined}>
       {shown
         ? <>{words && copyable && <button type="button" className="btn secondary" onClick={() => doCopy("phrase", words.join(" "))}><Copy size={16} />{copied ? "Copied · clears in 60s" : "Copy (clears in 60s)"}</button>}<button type="button" className="btn primary" onClick={onDone}>{doneLabel}</button></>
-        : <button type="button" className="btn primary hold" style={{ ["--held" as string]: held }} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!timer.current) start(); } }} onKeyUp={() => { stop(); timer.current = null; }}><span className="fill" /><span>Press and hold to reveal</span></button>}
+        : <button type="button" className="btn primary hold" style={{ ["--held" as string]: held }} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!timer.current) start(); } }} onKeyUp={() => { stop(); timer.current = null; }}><span className="fill" /><span>Hold to reveal</span></button>}
     </div>
   </div>;
 }

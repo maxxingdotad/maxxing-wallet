@@ -62,7 +62,10 @@ function Letter({ text, size, color }: { text: string; size: number; color?: str
 
 export function ChainLogo({ networkId, name, size = 20 }: { networkId: string; name: string; size?: number }) {
   const Logo = chainIcon(networkId);
-  return Logo ? <span aria-hidden="true" style={{ display: "inline-grid", width: size, height: size, flexShrink: 0 }}><Logo size={size} variant="branded" /></span> : <Letter text={name} size={size} />;
+  // Base's mark is a small blue square with empty space around it: its tile is filled with the same blue, so it reads as one
+  // solid mark like the others (and as a round dot when it is a token's badge).
+  const fill = networkId === "eip155:8453" || networkId === "eip155:84532" ? "#00F" : undefined;
+  return Logo ? <span aria-hidden="true" className="chain-logo" style={{ display: "inline-grid", width: size, height: size, flexShrink: 0, background: fill }}><Logo size={size} variant="branded" /></span> : <Letter text={name} size={size} />;
 }
 
 /**

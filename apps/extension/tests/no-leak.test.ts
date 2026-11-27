@@ -380,6 +380,9 @@ test("only reviewed files reach the network, other windows, the clipboard or the
     "src/app/kit.tsx": ["clipboard", "offscreen", "sendMessage"], // copy; for secrets, asks the background to clear the clipboard (Chrome only)
     "src/background.ts": ["offscreen", "sendMessage", "storage", "windows.create"], // the approval window; declines to the asking page; clipboard clear
     "src/content.ts": ["postMessage", "sendMessage"],       // carries the page's requests and the answers
+    "src/dev/chrome-shim.ts": ["localStorage", "sessionStorage", "window.open"], // dev.html only (localhost, never in the build)
+    "src/dev/demo.ts": ["fetch"],                           // dev.html?demo only: answers the networks with sample data, sends nothing
+    "src/dev/main.tsx": ["import()", "indexedDB", "localStorage", "location=", "sessionStorage", "src="], // dev.html only: ?reset, ?demo
     "src/inpage.ts": ["postMessage"],                       // the site's provider asking the content script
     "src/lib/approval.ts": ["sendMessage", "storage"],      // answers the asking document: the signature or a refusal (tested above)
     "src/lib/balances.ts": ["fetch"],                       // balances: addresses only

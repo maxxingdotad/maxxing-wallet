@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { Check, Download, ShieldCheck } from "lucide-react";
+import { Check, Download } from "lucide-react";
 import { Welcome } from "../ui/screens/Welcome";
+import { WalletReveal } from "../ui/screens/Reveal";
 import { Steps, short } from "../ui/parts";
 import { Busy, NewPassword, PageHead, PasswordForm, message } from "./kit";
 import { HoldReveal } from "./Export";
@@ -22,6 +23,7 @@ export function Onboarding({ onDone, addOnly, onCancel }: { onDone: () => void; 
   const [preview, setPreview] = useState<{ evm: string; solana: string } | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const back = onCancel ?? (() => setStep("welcome"));
 
   if (busy) return <div className="popup"><div className="backdrop" /><Busy text={busy} /></div>;
@@ -58,15 +60,11 @@ export function Onboarding({ onDone, addOnly, onCancel }: { onDone: () => void; 
     }} /></div>
   </div>;
 
-  if (step === "backup-intro") return <div className="popup"><div className="backdrop" />
-    <div className="scroll" style={{ paddingTop: 30 }}>
-      <Steps at={2} of={3} />
-      <div className="danger-mark" style={{ background: "var(--positive-soft)", color: "var(--positive)", boxShadow: "0 0 0 8px rgb(60 176 122 / .06)" }}><ShieldCheck size={30} strokeWidth={1.7} /></div>
-      <h2 className="center-title">Your wallet is ready</h2>
-      <p className="center-sub">Now write down your recovery phrase. It's the only way back in if you lose this device or forget your password, and anyone who has it can take everything.</p>
-    </div>
-    <div className="footer"><button type="button" className="btn primary" onClick={() => setStep(pin ? "backup-show" : "backup-pin")}>Back up now</button><button type="button" className="btn ghost" onClick={onDone}>Later (you'll be reminded)</button></div>
-  </div>;
+  // The new wallet opens here, once: coming back from the phrase screens shows it already open.
+  if (step === "backup-intro") return <WalletReveal addresses={wallet.snapshot().public} title="Your wallet is ready" opened={revealed} onOpened={() => setRevealed(true)} steps={<Steps at={2} of={3} />}
+    footer={<><button type="button" className="btn primary" onClick={() => setStep(pin ? "backup-show" : "backup-pin")}>Back up now</button><button type="button" className="btn ghost" onClick={onDone}>Later (you'll be reminded)</button></>}>
+    <p className="center-sub">Now write down your recovery phrase. It's the only way back in if you lose this device or forget your password, and anyone who has it can take everything.</p>
+  </WalletReveal>;
 
   if (step === "backup-show") return <HoldReveal title="Your recovery phrase" words={words} step={{ at: 2, of: 3 }} onBack={() => setStep("backup-intro")} doneLabel="I wrote them down" onDone={() => setStep("backup-check")} />;
 
@@ -105,12 +103,19 @@ export function Onboarding({ onDone, addOnly, onCancel }: { onDone: () => void; 
     </div>
   </div>;
 
+  const allSet = "Your keys are on this device, encrypted with your password. MAXXING never has them. Sites can now ask to connect, and you'll see every request before anything is signed.";
+  // A restored wallet opens here (a new one already opened before its backup).
+  if (!revealed) return <WalletReveal addresses={wallet.snapshot().public} title="Your wallet is back" onOpened={() => setRevealed(true)} steps={<Steps at={3} of={3} />}
+    footer={<button type="button" className="btn primary" onClick={onDone}>Open my wallet</button>}>
+    <p className="center-sub">{allSet}</p>
+  </WalletReveal>;
+
   return <div className="popup"><div className="backdrop" />
     <div className="scroll" style={{ paddingTop: 48 }}>
       <Steps at={3} of={3} />
       <div className="danger-mark" style={{ background: "var(--positive-soft)", color: "var(--positive)", boxShadow: "0 0 0 8px rgb(60 176 122 / .06)" }}><Check size={34} strokeWidth={2.2} /></div>
       <h2 className="center-title">You're all set</h2>
-      <p className="center-sub">Your keys are on this device, encrypted with your password. MAXXING never has them. Sites can now ask to connect, and you'll see every request before anything is signed.</p>
+      <p className="center-sub">{allSet}</p>
     </div>
     <div className="footer"><button type="button" className="btn primary" onClick={onDone}>Open my wallet</button></div>
   </div>;

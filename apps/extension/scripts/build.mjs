@@ -49,7 +49,8 @@ if (browser === "firefox") {
   delete manifest.minimum_chrome_version;
 }
 writeFileSync(resolve(out, "manifest.json"), JSON.stringify(manifest, null, 2) + "\n");
-// The design gallery is for review only.
+// The design gallery and the dev page are for development only (vite.config.ts leaves them out; this makes sure).
 rmSync(resolve(out, "design.html"), { force: true });
+rmSync(resolve(out, "dev.html"), { force: true });
 cpSync(resolve(here, "LICENSE"), resolve(out, "LICENSE"));
 console.log(`MAXXING Wallet ${manifest.version} for ${browser}: ${out}`);

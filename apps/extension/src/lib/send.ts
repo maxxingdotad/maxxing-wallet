@@ -111,6 +111,21 @@ export async function draftEvmMaxSend(input: { network: Network; from: string; t
   return { ...probe, transaction, summary: transactionSummary(transaction), to, kind: "send" };
 }
 
+/**
+ * The network fee to expect for sending this holding, before a recipient is known: the most a transfer like it can cost now, in
+ * the network's coin. An estimate for the form; the review drafts the real transaction and shows its own figure.
+ */
+export async function estimateSendFee(network: Network, holding: { address?: string | null }, from: string): Promise<{ fee: bigint; decimals: number; symbol: string }> {
+  if (network.family === "SOLANA") return { fee: SOL_FEE, decimals: 9, symbol: network.nativeSymbol };
+  const self = getAddress(from);
+  // A token: a transfer of nothing to yourself costs what a real one does to estimate. A coin: a plain transfer.
+  const call = holding.address
+    ? { to: getAddress(holding.address), value: 0n, data: `0xa9059cbb${self.slice(2).toLowerCase().padStart(64, "0")}${"0".repeat(64)}` as `0x${string}` }
+    : { to: self, value: 0n };
+  const draft = await draftEvmCall({ network, from, call });
+  return { fee: maxFeeOf(draft.transaction as { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: bigint }), decimals: 18, symbol: network.nativeSymbol };
+}
+
 /** The most a transaction can cost in fees, in the coin's smallest unit. */
 export const maxFeeOf = (tx: { gas?: bigint; maxFeePerGas?: bigint; gasPrice?: bigint }) => (tx.gas ?? 0n) * (tx.maxFeePerGas ?? tx.gasPrice ?? 0n);
 

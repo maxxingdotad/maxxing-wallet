@@ -74,7 +74,8 @@ export function ActivityView({ account, onTab }: { account: { evm: string; solan
     <div className="scroll" data-testid="activity">
       <div className="seg" role="tablist" aria-label="Show" style={{ marginBottom: 10 }}>{FILTERS.map(f => <button key={f.id} type="button" role="tab" aria-selected={filter === f.id} className={filter === f.id ? "on" : ""} onClick={() => setFilter(f.id)}>{f.label}</button>)}</div>
       {!shown ? <div className="card rows" aria-busy="true">{[0, 1, 2].map(i => <div key={i} className="row skeleton-row"><span className="sk sk-circle" /><div className="main"><span className="sk sk-line" /><span className="sk sk-line short" /></div></div>)}</div>
-        : !shown.length ? <div className="card empty">{filter === "tx" || prefs?.network !== "all" ? "No transactions here yet. Sends and swaps from this account show up here with their status." : "Connections, signatures, sends, locks and exports show up here. They stay on this device."}</div>
+        : !shown.length ? <div className="blank"><span className="blank-mark"><ArrowUpRight size={22} /></span><b>{filter === "tx" || prefs?.network !== "all" ? "No transactions here yet" : "Nothing here yet"}</b>
+          <p>{filter === "tx" || prefs?.network !== "all" ? "Sends and swaps from this account show up here with their status." : "Connections, signatures, sends, locks and exports show up here. They stay on this device."}</p></div>
         : groups.map(g => <section key={g.day}>
           <div className="day-head">{g.day}</div>
           <div className="card rows">{g.items.map((a, i) => {

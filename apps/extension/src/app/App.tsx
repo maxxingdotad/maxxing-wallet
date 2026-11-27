@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
+import { ArrowLeft, DollarSign, FlaskConical, KeySquare, Pencil, ScrollText, Settings as SettingsIcon, Timer, UserPlus } from "lucide-react";
 import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Code2, ExternalLink, Eye, EyeOff, Globe, KeyRound, LifeBuoy, Lock, LogOut, Maximize2, PanelRight, Plus, RefreshCw, ShieldCheck, Trash2, Download } from "lucide-react";
 import { Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, PasswordForm, copy, message, useEscape, useToast } from "./kit";
 import { Onboarding } from "./Onboarding";
+import { BrandCap, BrandMark } from "../ui/screens/Welcome";
 import { ExportFlow } from "./Export";
 import { SendView } from "./Send";
 import { SwapView } from "./Swap";
@@ -31,6 +33,18 @@ const asAccount = (w: WalletSummary, index = w.selected, value = 0): Account => 
   const x = w.accounts.find(a => a.index === index) ?? selectedAccount(w);
   return { id: `${w.id}:${x.index}`, name: x.label, color: colorFor(`${w.id}:${x.index}`), evm: x.evm, solana: x.solana, usd: value };
 };
+/** A bubble's short mark: "Account 176" → "A176", "Main" → "M", "Trading Desk" → "TD" (so many accounts stay tellable apart). */
+const bubbleMark = (label: string) => {
+  const words = label.trim().split(/\s+/).filter(Boolean);
+  const digits = label.match(/\d+$/)?.[0] ?? "";
+  const letters = words.filter(w => !/^\d+$/.test(w)).slice(0, digits ? 1 : 2).map(w => [...w][0]!.toUpperCase()).join("");
+  return (letters + digits).slice(0, 4) || "?";
+};
+function Bubble({ w, index }: { w: WalletSummary; index?: number }) {
+  const a = asAccount(w, index);
+  const mark = bubbleMark(a.name);
+  return <span className={`rail-bubble${mark.length > 3 ? " small" : ""}`} style={{ ["--c" as string]: a.color }}>{mark}</span>;
+}
 
 type View = { name: "home" } | { name: "old-wallets" } | { name: "manage-assets" } | { name: "token"; holding: Holding; all: Holding[] } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" } | { name: "sites" } | { name: "approvals" } | { name: "change-password" } | { name: "networks" } | { name: "network"; networkId: string } | { name: "add-network" };
 
@@ -103,11 +117,11 @@ function Unlock({ snap, onOpen, onImport }: { snap: wallet.WalletSnapshot; onOpe
   const [error, setError] = useState(""), [waitUntil, setWaitUntil] = useState(wallet.pinWaitUntil());
   const [forgot, setForgot] = useState(false);
   const notBackedUp = snap.accounts.filter(a => !a.backedUp);
-  return <div className="popup unlock" data-testid="unlock"><div className="backdrop" />
+  return <div className="popup unlock brand-screen" data-testid="unlock">
+    <BrandCap className="unlock-cap" />
     <div className="scroll">
-      <div className="unlock-hero" aria-hidden="true"><span className="unlock-halo" /><img className="unlock-cap" src="/brand/cap.webp" alt="" /></div>
-      <h1 className="unlock-title">Unlock MAXXING Wallet</h1>
-      <p className="unlock-sub">One password opens every wallet on this device.</p>
+      <BrandMark />
+      <h2 className="sr-only">Unlock MAXXING Wallet</h2>
       <PasswordForm submitLabel="Unlock" error={error} waitUntil={waitUntil} onComplete={async password => {
         try { setError(""); await wallet.unlock(password); onOpen(); }
         catch (e) { if ((e as { code?: string }).code === "WALLET_NEEDS_OLD_PIN") { onOpen(); return; } setError(message(e)); setWaitUntil(wallet.pinWaitUntil()); }
@@ -156,7 +170,7 @@ function OldWallet({ wallet: w, others, onDone, onBack }: { wallet: { id: string
 function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.WalletSnapshot; active: wallet.WalletSnapshot["accounts"][number]; go: (v: View) => void; onTab: (t: DockTab) => void; onChanged: () => void; toast: (t: string) => void }) {
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
   const [loading, setLoading] = useState(false);
-  const [sheet, setSheet] = useState(false);
+  const [sheet, setSheet] = useState(false), [rail, setRail] = useState(false);
   const [prefs, setPrefs] = useState<Settings | null>(null);
   const [assetChoices, setAssetChoices] = useState<AssetPrefs>(NO_PREFS);
   const [picking, setPicking] = useState(false);
@@ -176,7 +190,7 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
   return <div className="popup">
     <div className="backdrop" />
     <header className="top">
-      <button type="button" className="account-pill" onClick={() => setSheet(true)} aria-label={`Switch account (now ${selectedAccount(active).label})`} title={selectedAccount(active).label}><Avatar account={asAccount(active)} /><b>{selectedAccount(active).label}</b><ChevronDown size={16} /></button>
+      <button type="button" className="account-pill" onClick={() => setRail(true)} aria-label={`Switch account (now ${selectedAccount(active).label})`} title={selectedAccount(active).label}><Avatar account={asAccount(active)} /><b>{selectedAccount(active).label}</b><ChevronDown size={16} /></button>
       <div className="top-right">
         <NetworkButton selected={prefs?.network ?? "all"} onOpen={() => setPicking(true)} />
         <button type="button" className="icon-btn" aria-label={prefs?.hideBalances ? "Show balances" : "Hide balances"} aria-pressed={!!prefs?.hideBalances}
@@ -197,7 +211,7 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
         <b>Use one password for everything.</b> Your wallets now open with one password: the PIN you just entered. You can choose a new one now (optional). <span style={{ display: "inline-flex", gap: 12 }}>
           <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "change-password" })}>Choose a new password</button>
           <button type="button" className="link-btn" style={{ fontSize: 12, color: "var(--muted)" }} onClick={async () => { await wallet.dismissNewPasswordOffer(); setOfferPassword(false); }}>Keep it</button></span></span></div>}
-      {!active.backedUp && <div className="alert warn" style={{ marginBottom: 10 }}><ShieldCheck size={16} /><span><b>Back up your recovery phrase.</b> It's the only way back in if you lose this device. <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "export", kind: "phrase" })}>Back up now</button></span></div>}
+      {!active.backedUp && <button type="button" className="nudge" onClick={() => go({ name: "export", kind: "phrase" })}><ShieldCheck size={17} /><span><b>Back up your recovery phrase</b>Your only way back in.</span><i>Back up</i></button>}
       <div className="section-head"><h2>Tokens</h2>{portfolio && <button type="button" onClick={() => void load()}>{portfolio.source === "api" ? "Live from MAXXING" : "Read from the networks"}</button>}</div>
       {/* Only when every endpoint of some network failed after retries: one quiet line, never a list of network names. */}
       {portfolio?.errors.length ? <div className="stale-note" role="status" data-testid="stale-note">
@@ -212,9 +226,70 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
     {picking && prefs && <NetworkSheet selected={prefs.network} showTestnets={prefs.showTestnets} onClose={() => setPicking(false)}
       onPick={async networkId => { setPicking(false); await settingsStore.write({ network: networkId }); setPortfolio(null); void load(); }} />}
     <Dock tab="home" onTab={onTab} />
+    {rail && <AccountRail snap={snap} onClose={() => setRail(false)} onChanged={onChanged} onManage={() => { setRail(false); setSheet(true); }} onSettings={() => { setRail(false); onTab("settings"); }}
+      onAdd={kind => { setRail(false); go({ name: "add", kind }); }}
+      onSwitched={(label, evm) => void siteStore.all().then(all => { const others = all.filter(s => s.evm.toLowerCase() !== evm.toLowerCase()).length; toast(others ? `${label} is open. ${others} connected site${others === 1 ? "" : "s"} still use${others === 1 ? "s" : ""} another account until you connect again.` : `${label} is open.`); })} />}
     {sheet && <AccountsSheet snap={snap} onClose={() => setSheet(false)} onChanged={onChanged} onAdd={kind => { setSheet(false); go({ name: "add", kind }); }}
       onSwitched={(label, evm) => void siteStore.all().then(all => { const others = all.filter(s => s.evm.toLowerCase() !== evm.toLowerCase()).length; toast(others ? `${label} is open. ${others} connected site${others === 1 ? "" : "s"} still use${others === 1 ? "s" : ""} another account until you connect again.` : `${label} is open.`); })} />}
   </div>;
+}
+
+/**
+ * The account drawer, from the left: every account of the open wallet as a bubble you tap to open, then the other wallets on
+ * this device, and at the bottom add (an account, a wallet, an import), edit (names, hiding, balances, copying: the full sheet)
+ * and settings. On liquid glass, so the home screen stays in view behind it.
+ */
+function AccountRail({ snap, onClose, onChanged, onManage, onSettings, onAdd, onSwitched }: {
+  snap: wallet.WalletSnapshot; onClose: () => void; onChanged: () => void; onManage: () => void; onSettings: () => void;
+  onAdd: (kind: "create" | "import") => void; onSwitched: (label: string, evm: string) => void;
+}) {
+  const active = snap.accounts.find(a => a.id === snap.activeId)!;
+  const [busy, setBusy] = useState(false), [error, setError] = useState(""), [adding, setAdding] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const close = () => { setLeaving(true); setTimeout(onClose, 180); };
+  useEscape(close);
+  const run = async (action: () => Promise<unknown>, after?: () => void) => {
+    setBusy(true); setError("");
+    try { await action(); onChanged(); after?.(); close(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+  };
+  const visible = active.accounts.filter(a => !a.hidden || a.index === active.selected);
+  const others = snap.accounts.filter(w => w.id !== active.id);
+  // The open account is scrolled into view when the drawer opens (a wallet can hold many).
+  const openRef = useCallback((el: HTMLButtonElement | null) => { el?.scrollIntoView({ block: "nearest" }); }, []);
+  return <>
+    <div className={`scrim rail-scrim${leaving ? " leaving" : ""}`} onClick={close} />
+    <nav className={`rail glass${leaving ? " leaving" : ""}`} aria-label="Accounts" data-testid="account-rail">
+      <button type="button" className="rail-back" aria-label="Close accounts" onClick={close}><ArrowLeft size={20} /></button>
+      <div className="rail-list">
+        {visible.map(a => {
+          const open = a.index === active.selected;
+          return <button key={a.index} type="button" ref={open ? openRef : undefined} className={`rail-item${open ? " on" : ""}`} disabled={busy} aria-current={open ? "true" : undefined}
+            aria-label={open ? `${a.label} (open)` : `Open ${a.label}`} title={`${a.label} · ${short(a.evm)}`}
+            onClick={() => open ? close() : void run(() => wallet.selectAccount(a.index), () => onSwitched(a.label, a.evm))}>
+            <Bubble w={active} index={a.index} />
+            <small>{a.label}</small>
+          </button>;
+        })}
+        {others.length > 0 && <div className="rail-divider" />}
+        {others.map(w => <button key={w.id} type="button" className="rail-item" disabled={busy} aria-label={`Open wallet ${w.label}`} title={`${w.label} · ${w.accounts.length} account${w.accounts.length === 1 ? "" : "s"}`}
+          onClick={() => void run(() => wallet.select(w.id))}>
+          <Bubble w={w} />
+          <small>{w.label}</small>
+        </button>)}
+      </div>
+      {error && <p className="rail-error" role="alert">{error}</p>}
+      <div className="rail-tools">
+        <button type="button" className="rail-tool" aria-label="Add" aria-expanded={adding} onClick={() => setAdding(x => !x)}><Plus size={20} /></button>
+        <button type="button" className="rail-tool" aria-label="Edit accounts" onClick={onManage}><Pencil size={18} /></button>
+        <button type="button" className="rail-tool" aria-label="Settings" onClick={onSettings}><SettingsIcon size={19} /></button>
+      </div>
+      {adding && <div className="rail-menu glass" role="menu">
+        <button type="button" role="menuitem" disabled={busy} onClick={() => void run(() => wallet.addAccount())}><UserPlus size={16} />New account<small>from this recovery phrase</small></button>
+        <button type="button" role="menuitem" onClick={() => onAdd("create")}><Plus size={16} />New wallet<small>its own recovery phrase</small></button>
+        <button type="button" role="menuitem" onClick={() => onAdd("import")}><Download size={16} />Import a wallet<small>with a recovery phrase</small></button>
+      </div>}
+    </nav>
+  </>;
 }
 
 /**
@@ -315,14 +390,19 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
   const [connected, setConnected] = useState<SitePermission[]>([]);
   useEffect(() => { void settingsStore.read().then(setPrefs); void siteStore.all().then(setConnected); }, []);
   const save = async (patch: Partial<Settings>) => { await settingsStore.write(patch); setPrefs(await settingsStore.read()); };
-  const item = (icon: React.ReactNode, label: string, onClick: () => void, danger = false) => <button type="button" className="row" style={{ width: "100%", textAlign: "left", minHeight: 52 }} onClick={onClick}>
-    <span style={{ color: danger ? "var(--negative)" : "var(--text-2)", display: "grid" }}>{icon}</span><div className="main"><b style={{ color: danger ? "var(--negative)" : undefined }}>{label}</b></div><ChevronRight size={16} style={{ color: "var(--dim)" }} />
+  const [lockPicker, setLockPicker] = useState(false);
+  // One row shape for every setting: icon, label (with a short note when it needs one), and on the right its value, a switch,
+  // or an arrow.
+  const item = (icon: React.ReactNode, label: string, onClick: () => void, danger = false, value?: string, testId?: string) => <button type="button" className="row set-row" data-testid={testId} onClick={onClick}>
+    <span className={`set-icon${danger ? " danger" : ""}`}>{icon}</span><div className="main"><b style={{ color: danger ? "var(--negative)" : undefined }}>{label}</b></div>
+    {value && <span className="set-value">{value}</span>}<ChevronRight size={16} style={{ color: "var(--dim)" }} />
   </button>;
-  const toggle = (label: string, note: string, on: boolean, flip: () => void) => <div className="card" style={{ display: "flex", alignItems: "center", gap: 12, padding: 12 }}>
-    <div style={{ flex: 1 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{label}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>{note}</div></div>
+  const toggle = (icon: React.ReactNode, label: string, note: string, on: boolean, flip: () => void) => <div className="row set-row">
+    <span className="set-icon">{icon}</span><div className="main"><b>{label}</b><small>{note}</small></div>
     <button type="button" role="switch" aria-label={label} aria-checked={on} className={`toggle${on ? " on" : ""}`} onClick={flip} />
   </div>;
   const link = (icon: React.ReactNode, label: string, url: string) => item(icon, label, () => void chrome.tabs.create({ url }));
+  const lockLabel = (m: number, long = false) => m < 60 ? `${m} ${long ? (m === 1 ? "minute" : "minutes") : "min"}` : `${m / 60} ${long ? (m === 60 ? "hour" : "hours") : "h"}`;
   return <div className="popup"><div className="backdrop" />
     <PageHead title={t("settings.title")} />
     <div className="scroll">
@@ -335,23 +415,20 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
         {mode !== "tab" && item(<Maximize2 size={18} />, "Open in a full tab", () => { void chrome.tabs.create({ url: chrome.runtime.getURL("popup.html?mode=tab") }); if (mode === "popup") window.close(); })}
       </div>
       <div className="section-head"><h2>{t("settings.security")}</h2></div>
-      <div className="card" style={{ padding: "12px 12px 14px" }}>
-        <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t("settings.autolock")}</div>
-        <div style={{ fontSize: 12, color: "var(--muted)", marginBottom: 10 }}>{t("settings.autolock.note")}</div>
-        <div className="seg">{AUTO_LOCK_CHOICES.map(m => <button key={m} type="button" className={prefs?.autoLockMinutes === m ? "on" : ""} onClick={() => void save({ autoLockMinutes: m })}>{m < 60 ? `${m} min` : `${m / 60} h`}</button>)}</div>
-      </div>
-      <div className="card rows" style={{ marginTop: 8 }}>
-        {item(<KeyRound size={18} />, "Show recovery phrase", () => go({ name: "export", kind: "phrase" }))}
-        {item(<KeyRound size={18} />, "Export private keys", () => go({ name: "export", kind: "keys" }))}
-        {item(<KeyRound size={18} />, t("settings.changePassword"), () => go({ name: "change-password" }))}
+      <div className="card rows">
+        {item(<Timer size={18} />, t("settings.autolock"), () => setLockPicker(true), false, prefs ? lockLabel(prefs.autoLockMinutes) : "", "autolock-row")}
         {item(<Lock size={18} />, "Lock now", async () => { await wallet.lock(); onChanged(); })}
+        {item(<KeyRound size={18} />, t("settings.changePassword"), () => go({ name: "change-password" }))}
+        {item(<ScrollText size={18} />, "Show recovery phrase", () => go({ name: "export", kind: "phrase" }))}
+        {item(<KeySquare size={18} />, "Export private keys", () => go({ name: "export", kind: "keys" }))}
       </div>
-      <div className="section-head"><h2>{t("settings.privacy")}</h2></div>
-      {toggle(t("settings.hideBalances"), t("settings.hideBalances.note"), !!prefs?.hideBalances, () => void save({ hideBalances: !prefs?.hideBalances }))}
-      <div className="section-head"><h2>{t("settings.networks")}</h2></div>
-      <div className="card rows" style={{ marginBottom: 8 }}>{item(<NetworkIcon size={18} />, t("settings.networksManage"), () => go({ name: "networks" }))}</div>
-      {toggle(t("settings.testnets"), t("settings.testnets.note", { names: listNames(networks(true).filter(n => n.testnet).map(n => n.name)) }), !!prefs?.showTestnets, () => void save({ showTestnets: !prefs?.showTestnets }))}
-      <div className="card" style={{ padding: 12, marginTop: 8 }}><div style={{ fontSize: 14, fontWeight: 600 }}>{t("settings.currency")}</div><div style={{ fontSize: 12, color: "var(--muted)" }}>{t("settings.currency.note")}</div></div>
+      <div className="section-head"><h2>{t("settings.privacy")} and {t("settings.networks").toLowerCase()}</h2></div>
+      <div className="card rows">
+        {toggle(<EyeOff size={18} />, t("settings.hideBalances"), "Amounts show as dots", !!prefs?.hideBalances, () => void save({ hideBalances: !prefs?.hideBalances }))}
+        {item(<NetworkIcon size={18} />, t("settings.networksManage"), () => go({ name: "networks" }))}
+        {toggle(<FlaskConical size={18} />, t("settings.testnets"), t("settings.testnets.note", { names: listNames(networks(true).filter(n => n.testnet).map(n => n.name)) }), !!prefs?.showTestnets, () => void save({ showTestnets: !prefs?.showTestnets }))}
+        <div className="row set-row"><span className="set-icon"><DollarSign size={18} /></span><div className="main"><b>{t("settings.currency")}</b></div><span className="set-value">USD</span></div>
+      </div>
       <div className="section-head"><h2>{t("settings.sites")}</h2></div>
       <div className="card rows">
         {item(<Globe size={18} />, `Connected sites${connected.length ? ` (${connected.length})` : ""}`, () => go({ name: "sites" }))}
@@ -370,7 +447,24 @@ function SettingsView({ snap, mode, go, onTab, toast, onChanged }: { snap: walle
       <p style={{ fontSize: 11.5, color: "var(--dim)", textAlign: "center", margin: "16px 0 4px", lineHeight: 1.5 }} data-testid="version">{t("settings.version", { version: chrome.runtime.getManifest().version, n: snap.accounts.length })}<br />{t("settings.keysNote")}</p>
     </div>
     <Dock tab="settings" onTab={onTab} />
+    {lockPicker && <ChoiceSheet title={t("settings.autolock")} note={t("settings.autolock.note")} onClose={() => setLockPicker(false)}
+      choices={AUTO_LOCK_CHOICES.map(m => ({ id: String(m), label: lockLabel(m, true), on: prefs?.autoLockMinutes === m }))}
+      onPick={id => { setLockPicker(false); void save({ autoLockMinutes: Number(id) as Settings["autoLockMinutes"] }); }} />}
   </div>;
+}
+
+/** A short list to pick one from (a setting's choices), as a sheet: the chosen one ticked. */
+function ChoiceSheet({ title, note, choices, onPick, onClose }: { title: string; note?: string; choices: { id: string; label: string; on: boolean }[]; onPick: (id: string) => void; onClose: () => void }) {
+  useEscape(onClose);
+  return <>
+    <div className="scrim" onClick={onClose} />
+    <section className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="grab" />
+      <div className="sheet-head"><h2>{title}</h2></div>
+      {note && <p className="sheet-note">{note}</p>}
+      <div className="choice-list">{choices.map(c => <button key={c.id} type="button" className={c.on ? "on" : ""} aria-pressed={c.on} onClick={() => onPick(c.id)}>{c.label}{c.on && <Check size={17} />}</button>)}</div>
+    </section>
+  </>;
 }
 
 /** Removing a wallet: only once it's backed up, after the same warning and the password. */

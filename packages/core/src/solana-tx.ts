@@ -14,6 +14,10 @@ export type SolanaTxSummary = {
   /** SPL Token and Token-2022 instructions, recognised exactly. Addresses from lookup tables are null: the transaction doesn't name them. */
   tokenActions: TokenAction[];
   otherInstructions: number;
+  /** System "Assign": an account handed to another program, which then controls it and everything in it. */
+  assigns: { account: string; owner: string }[];
+  /** Programs behind the instructions the wallet can't read (fee settings, memos and token-account creation aside). */
+  unreadPrograms: string[];
   usesLookupTables: boolean;
 };
 export type TokenAction =
@@ -26,22 +30,34 @@ type Parsed = SolanaTxSummary & { messageOffset: number; signatureCount: number;
 const SYSTEM_PROGRAM = "11111111111111111111111111111111";
 export const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
 
-/** The SPL Token instructions people need to see: moving, approving, handing over and closing token accounts. Same layout in Token-2022. */
+/** Programs whose instructions can't move or hand over anything: fee settings, memos, and creating a token account. */
+const HARMLESS_PROGRAMS = new Set([
+  "ComputeBudget111111111111111111111111111111",
+  "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+  "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
+  "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",
+]);
+
+/**
+ * The SPL Token instructions people need to see: moving, approving, handing over and closing token accounts. Same layout in
+ * Token-2022. The programs read these by their first byte and ignore bytes and accounts past what they need, so the wallet
+ * reads them the same way: an instruction padded with an extra byte is still the transfer it is.
+ */
 function tokenAction(data: Uint8Array, account: (i: number) => string | null): TokenAction | null {
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength), tag = data[0];
   const amount = () => view.getBigUint64(1, true);
   switch (tag) {
-    case 3: return data.length === 9 ? { kind: "transfer", source: account(0), destination: account(1), owner: account(2), mint: null, amount: amount(), decimals: null } : null;
-    case 12: return data.length === 10 ? { kind: "transfer", source: account(0), mint: account(1), destination: account(2), owner: account(3), amount: amount(), decimals: data[9]! } : null;
-    case 4: return data.length === 9 ? { kind: "approve", source: account(0), delegate: account(1), owner: account(2), mint: null, amount: amount(), decimals: null } : null;
-    case 13: return data.length === 10 ? { kind: "approve", source: account(0), mint: account(1), delegate: account(2), owner: account(3), amount: amount(), decimals: data[9]! } : null;
+    case 3: return data.length >= 9 ? { kind: "transfer", source: account(0), destination: account(1), owner: account(2), mint: null, amount: amount(), decimals: null } : null;
+    case 12: return data.length >= 10 ? { kind: "transfer", source: account(0), mint: account(1), destination: account(2), owner: account(3), amount: amount(), decimals: data[9]! } : null;
+    case 4: return data.length >= 9 ? { kind: "approve", source: account(0), delegate: account(1), owner: account(2), mint: null, amount: amount(), decimals: null } : null;
+    case 13: return data.length >= 10 ? { kind: "approve", source: account(0), mint: account(1), delegate: account(2), owner: account(3), amount: amount(), decimals: data[9]! } : null;
     case 6: {
       if (data.length < 3) return null;
       const some = data[2] === 1;
-      if (some ? data.length !== 35 : data.length !== 3) return null;
+      if (some && data.length < 35) return null;
       return { kind: "setAuthority", account: account(0), currentAuthority: account(1), authorityType: data[1]!, newAuthority: some ? bs58.encode(data.subarray(3, 35)) : null };
     }
-    case 9: return data.length === 1 ? { kind: "close", account: account(0), destination: account(1), owner: account(2) } : null;
+    case 9: return { kind: "close", account: account(0), destination: account(1), owner: account(2) };
     default: return null;
   }
 }
@@ -82,6 +98,7 @@ export function parseSolanaTransaction(bytes: Uint8Array): Parsed {
   let instructionCount: number;
   [instructionCount, offset] = compactU16(bytes, offset);
   const programs = new Set<string>(), transfers: SolanaTxSummary["transfers"] = [], tokenActions: TokenAction[] = [];
+  const assigns: SolanaTxSummary["assigns"] = [], unread = new Set<string>();
   let otherInstructions = 0;
   for (let i = 0; i < instructionCount; i++) {
     const programIndex = bytes[offset++];
@@ -99,11 +116,17 @@ export function parseSolanaTransaction(bytes: Uint8Array): Parsed {
     const program = keys[programIndex] ?? "lookup table account";
     programs.add(program);
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    if (program === SYSTEM_PROGRAM && data.length === 12 && view.getUint32(0, true) === 2 && accounts.length === 2 && keys[accounts[0]!] && keys[accounts[1]!])
+    // The System Program reads its instruction by the first four bytes and ignores what follows, and extra accounts too: a
+    // transfer with a spare byte or a third account is still a transfer, and is shown as one.
+    const system = program === SYSTEM_PROGRAM && data.length >= 4 ? view.getUint32(0, true) : null;
+    if (system === 2 && data.length >= 12 && accounts.length >= 2 && keys[accounts[0]!] && keys[accounts[1]!])
       transfers.push({ from: keys[accounts[0]!]!, to: keys[accounts[1]!]!, lamports: view.getBigUint64(4, true) });
+    else if (system === 1 && data.length >= 36 && keys[accounts[0]!])
+      assigns.push({ account: keys[accounts[0]!]!, owner: bs58.encode(data.subarray(4, 36)) });
     else {
       const action = TOKEN_PROGRAMS.includes(program) && data.length ? tokenAction(data, i => accounts[i] === undefined ? null : keys[accounts[i]!] ?? null) : null;
-      if (action) tokenActions.push(action); else otherInstructions++;
+      if (action) tokenActions.push(action);
+      else { otherInstructions++; if (!HARMLESS_PROGRAMS.has(program)) unread.add(program); }
     }
   }
   let usesLookupTables = false;
@@ -122,7 +145,7 @@ export function parseSolanaTransaction(bytes: Uint8Array): Parsed {
   }
   if (offset !== bytes.length) throw new Error("SOLANA_TX_INVALID");
   return {
-    version, feePayer: keys[0]!, signers: keys.slice(0, requiredSignatures), programs: [...programs], transfers, tokenActions, otherInstructions, usesLookupTables,
+    version, feePayer: keys[0]!, signers: keys.slice(0, requiredSignatures), programs: [...programs], transfers, tokenActions, otherInstructions, assigns, unreadPrograms: [...unread], usesLookupTables,
     messageOffset, signatureCount, requiredSignatures, keys,
   };
 }

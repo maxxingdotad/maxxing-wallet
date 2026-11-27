@@ -4,7 +4,7 @@
  * this, and signs the parameters this returns: the request as it was shown, a transaction as checked field by field.
  */
 import { ALLOWED_DELEGATE } from "./signing";
-import { checkedTransaction, messageForDisplay, networkKnown, networkName, short, solanaBytesView, transactionSummary, typedDataSummary, type Row } from "./review";
+import { checkedTransaction, messageForDisplay, networkKnown, networkName, solanaBytesView, transactionSummary, typedDataSummary, type Row } from "./review";
 import { checkSignIn, untilText } from "./sign-in";
 
 /** The standard EIP-1193 wording for a declined request, with its code, which apps and viem already recognise. */
@@ -64,8 +64,9 @@ export function approvalView(method: SigningMethod, params: any, origin: string,
       view.title = summary.spending ? "Approve a spending permission" : `Sign ${summary.kind}`;
       if (summary.app) view.rows.push(["For", summary.app]);
       if (summary.network) view.rows.push(["Network", summary.network]);
-      if (summary.contract) view.rows.push(["Contract", short(summary.contract)]);
+      if (summary.contract) view.rows.push(["Contract", summary.contract]);
       view.rows.push(...summary.rows);
+      if (summary.unlimited) view.warnings.push("There's no limit on the amount: this permission covers all of that token, now and later.");
       if (summary.spending) view.warnings.push("This lets someone else move your tokens. Only approve if you expect it.");
       if (summary.network && !networkKnown((params as { domain?: { chainId?: unknown } }).domain?.chainId)) view.warnings.push("This network isn't one MAXXING lists.");
       return { view, params };
@@ -75,8 +76,11 @@ export function approvalView(method: SigningMethod, params: any, origin: string,
       const summary = transactionSummary(transaction);
       view.title = summary.callsContract ? "Confirm a transaction" : `Send ${summary.amount}`;
       if (summary.tokenCall) view.actions.push(summary.tokenCall.text);
+      // Code the wallet can't read is said plainly, never left looking like an ordinary send.
+      else if (summary.callsContract) view.actions.push("Runs this contract's code, which the wallet can't read. It can move tokens you've let it spend, and the amount sent with it.");
       view.rows.push(["Network", summary.network]);
-      if (summary.to) view.rows.push([summary.callsContract ? "Contract" : "To", short(summary.to)]);
+      // In full: a shortened address can be imitated by one that starts and ends the same.
+      if (summary.to) view.rows.push([summary.callsContract ? "Contract" : "To", summary.to]);
       view.rows.push(["Amount", summary.amount]);
       if (summary.maxFee) view.rows.push(["Network fee, at most", summary.maxFee]);
       view.rows.push(...summary.rows);
@@ -88,7 +92,7 @@ export function approvalView(method: SigningMethod, params: any, origin: string,
       if (typeof params?.address !== "string" || params.address.toLowerCase() !== ALLOWED_DELEGATE.toLowerCase()) throw new Error("RELAY_AUTHORIZATION_DELEGATE");
       view.title = "Turn on gasless trading";
       view.actions.push(`Your account on ${networkName(params.chainId)} can then run trades you sign without holding gas. It runs only what you sign.`);
-      view.rows.push(["Network", networkName(params.chainId)], ["Delegates to", `${short(ALLOWED_DELEGATE)} (Relay)`]);
+      view.rows.push(["Network", networkName(params.chainId)], ["Delegates to (Relay)", ALLOWED_DELEGATE]);
       return { view, params };
     }
     case "solana.signBytes": {

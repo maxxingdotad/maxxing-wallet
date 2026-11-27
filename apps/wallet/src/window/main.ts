@@ -448,7 +448,8 @@ function prepare(method: Exclude<WindowMethod, "connect">, params: Record<string
         body: [
           summary.network && !networkKnown((params.typedData as { domain?: { chainId?: unknown } }).domain?.chainId) ? h("p", { className: "warn" }, UNKNOWN_NETWORK) : null,
           summary.spending ? h("p", { className: "warn" }, `This lets ${summary.app ?? "someone"} use your tokens later. Only sign if you trust ${app.name}.`) : null,
-          rowsTable([["Type", summary.kind], ...(summary.app ? [["For", summary.app] as Row] : []), ...(summary.network ? [["Network", summary.network] as Row] : []), ...(summary.contract ? [["Contract", short(summary.contract)] as Row] : [])]),
+          summary.unlimited ? h("p", { className: "warn" }, "There's no limit on the amount: this permission covers all of that token, now and later.") : null,
+          rowsTable([["Type", summary.kind], ...(summary.app ? [["For", summary.app] as Row] : []), ...(summary.network ? [["Network", summary.network] as Row] : []), ...(summary.contract ? [["Contract", summary.contract] as Row] : [])]),
           h("details", {}, h("summary", {}, "Details"), rowsTable(summary.rows)),
         ],
         sign: () => signing.evmSignTypedData(params.typedData as never),
@@ -465,7 +466,7 @@ function prepare(method: Exclude<WindowMethod, "connect">, params: Record<string
         body: [
           networkKnown(transaction.chainId) ? null : h("p", { className: "warn" }, UNKNOWN_NETWORK),
           insight,
-          rowsTable([["Network", summary.network], ["To", summary.to ? short(summary.to) : "New contract"], ["Amount", summary.amount], ...(summary.maxFee ? [["Network fee, at most", summary.maxFee] as Row] : [])]),
+          rowsTable([["Network", summary.network], ["To", summary.to ?? "New contract"], ["Amount", summary.amount], ...(summary.maxFee ? [["Network fee, at most", summary.maxFee] as Row] : [])]),
           ...actionLines(summary.tokenCall ? [summary.tokenCall] : []),
           summary.callsContract && !summary.tokenCall ? message("This also runs app code on the network.") : null,
           summary.rows.length ? h("details", {}, h("summary", {}, "Details"), rowsTable(summary.rows)) : null,

@@ -67,6 +67,7 @@ async function overLimit(origin: string, now = Date.now()) {
   return false;
 }
 
+let siteTurn: Promise<void> = Promise.resolve();
 async function handleSiteRequest(message: SiteRequest, sender: chrome.runtime.MessageSender): Promise<SiteAnswer> {
   const origin = sender.origin ?? (sender.url ? new URL(sender.url).origin : "");
   const tabId = sender.tab?.id, frameId = sender.frameId ?? 0;
@@ -166,7 +167,11 @@ const fromExtensionPage = (sender: chrome.runtime.MessageSender) => sender.id ==
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (sender.id !== chrome.runtime.id) return false;
   if (message?.type === "site-request") {
-    handleSiteRequest(message as SiteRequest, sender).then(reply, (error: unknown) => reply({ done: true, ok: false, error: { message: `The wallet couldn't take this request: ${error instanceof Error ? error.message : String(error)}`, code: 4900 } }));
+    // One at a time: "one request per tab" and the windows-per-minute count are read and then written, so requests fired in
+    // the same instant are taken in turn and can't all pass the check before the first is counted.
+    const turn = siteTurn.then(() => handleSiteRequest(message as SiteRequest, sender));
+    siteTurn = turn.then(() => {}, () => {});
+    turn.then(reply, (error: unknown) => reply({ done: true, ok: false, error: { message: `The wallet couldn't take this request: ${error instanceof Error ? error.message : String(error)}`, code: 4900 } }));
     return true;
   }
   if (message?.type === "site-status") {

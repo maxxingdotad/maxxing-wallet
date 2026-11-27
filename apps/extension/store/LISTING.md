@@ -51,8 +51,9 @@ connects ask for signatures, which the user approves or declines one by one.
 | `clipboardWrite` | Copies addresses, and a secret when the user asks. |
 | `offscreen` | A service worker has no clipboard; an offscreen document clears a copied secret after 60 seconds, after the popup has closed. |
 | `clipboardRead` (optional, asked the first time a secret is copied) | To clear the clipboard only if it still holds the secret, leaving anything copied since. |
-| Host `https://api.relay.link/*` | Swap and bridge quotes and status. |
+| Host permissions | None. Swap and bridge quotes come from Relay's public API, which answers any origin; every address the pages may reach is listed in their Content-Security-Policy. |
 | Content scripts on `https://*/*` | Lets websites find the wallet (EIP-6963, Wallet Standard) and send it requests; the script carries messages only and reads nothing from the page. |
+| Content scripts on `http://localhost/*` and `http://127.0.0.1/*` | Lets developers connect the wallet to a site they run on their own computer while building it (the same messages-only script; no other plain-http site gets it). |
 | Remote code | None. All code ships in the package; the pages' Content-Security-Policy allows only the extension's own scripts. |
 
 ## Data use disclosures (Chrome "Privacy practices")

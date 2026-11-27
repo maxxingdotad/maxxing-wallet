@@ -5,7 +5,6 @@ import { ChainLogo } from "../ui/logos";
 import { PageHead, copy } from "./kit";
 import { NetworkButton, NetworkSheet } from "./Assets";
 import { networks, type Network } from "../lib/chains";
-import { listNames } from "../lib/strings";
 import { settings as settingsStore, type Settings } from "../lib/store";
 
 const FINDER = 7;
@@ -27,49 +26,53 @@ export function AddressQr({ value, label }: { value: string; label: string }) {
 }
 
 type Account = { evm: string; solana: string; label?: string };
-
-/** One address with its QR, copy, and the network it's for. */
-function AddressCard({ network, address, onCopied }: { network: Network | null; address: string; onCopied: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const family = network?.family ?? (address.startsWith("0x") ? "EVM" : "SOLANA");
-  const title = network ? network.name : family === "EVM" ? "EVM networks" : "Solana";
-  return <div className="card receive-card">
-    <div className="receive-head">{network ? <ChainLogo networkId={network.networkId} name={network.name} size={22} /> : null}<b>{title}</b></div>
-    <div className="qr-wrap"><AddressQr value={address} label={`QR code of your ${title} address`} /></div>
-    <div className="addr receive-addr" data-testid="receive-address">{address}</div>
-    <button type="button" className="btn secondary" style={{ height: 40 }} onClick={async () => { await copy(address); setCopied(true); onCopied(); setTimeout(() => setCopied(false), 1500); }}>
-      {copied ? <Check size={15} /> : <Copy size={15} />}{copied ? "Copied" : "Copy address"}
-    </button>
-  </div>;
-}
+type Family = "EVM" | "SOLANA";
 
 /**
- * Receive, per network: the address for the network picked (or both addresses for "All networks"), each with its QR code and
- * copy, and a plain warning to send only on that network.
+ * Receive: one address at a time, big enough to scan, one tap to copy. With "All networks" a switch chooses between the EVM
+ * address (the same on every EVM network) and the Solana one; with a network picked, its address and a plain "send only on" line.
+ * Under the code: the networks this address works on, so nobody sends from the wrong one.
  */
 export function ReceiveView({ account, onBack, toast }: { account: Account; onBack: () => void; toast: (t: string) => void }) {
   const [prefs, setPrefs] = useState<Settings | null>(null);
   const [picking, setPicking] = useState(false);
+  const [side, setSide] = useState<Family>("EVM");
+  const [copied, setCopied] = useState(false);
   useEffect(() => { void settingsStore.read().then(setPrefs); }, []);
   if (!prefs) return <div className="popup"><div className="backdrop" /><PageHead title="Receive" onBack={onBack} /></div>;
   const network = prefs.network === "all" ? null : networks(prefs.showTestnets).find(n => n.networkId === prefs.network) ?? null;
-  // Named from the registry: its three most used EVM networks.
-  const evmExamples = listNames(networks(false).filter(n => n.family === "EVM").slice(0, 3).map(n => n.name));
+  const family: Family = network?.family ?? side;
+  const address = family === "SOLANA" ? account.solana : account.evm;
+  const works = network ? [network] : networks(false).filter(n => n.family === family);
+  const title = network ? network.name : family === "EVM" ? "EVM" : "Solana";
+  // The first and last characters are what people compare, so they stand out; the middle is quieter.
+  const head = address.slice(0, family === "EVM" ? 6 : 4), tail = address.slice(-4), middle = address.slice(head.length, -4);
+  const copyIt = async () => { await copy(address); setCopied(true); toast("Address copied"); setTimeout(() => setCopied(false), 1600); };
   return <div className="popup"><div className="backdrop" />
     <PageHead title="Receive" onBack={onBack} right={<NetworkButton selected={prefs.network} onOpen={() => setPicking(true)} />} />
-    <div className="scroll stack" data-testid="receive">
-      {network ? <>
-        <div className="alert warn" role="note"><AlertTriangle size={16} /><span><b>Send only on {network.name}.</b> {network.family === "EVM"
-          ? `This address is the same on every EVM network, but tokens sent on another network arrive there, not on ${network.name}.`
-          : "Tokens sent from another network to this address can be lost."}</span></div>
-        <AddressCard network={network} address={network.family === "SOLANA" ? account.solana : account.evm} onCopied={() => toast("Address copied")} />
-      </> : <>
-        <p className="ask-sub" style={{ margin: "0 2px" }}>Pick a network above to get its address with a warning for it. Your two addresses:</p>
-        <AddressCard network={null} address={account.evm} onCopied={() => toast("Address copied")} />
-        <p className="receive-note">One address for {evmExamples} and every EVM network. Check the sender uses the network you expect.</p>
-        <AddressCard network={null} address={account.solana} onCopied={() => toast("Address copied")} />
-        <p className="receive-note">Solana only. Never send from an EVM network to this address.</p>
-      </>}
+    <div className="scroll receive" data-testid="receive">
+      {!network && <div className="switch2" role="tablist" aria-label="Which address" data-side={side}>
+        <span className="switch2-thumb" aria-hidden="true" />
+        {(["EVM", "SOLANA"] as const).map(f => <button key={f} type="button" role="tab" aria-selected={side === f} data-testid={`receive-${f.toLowerCase()}`} onClick={() => setSide(f)}>{f === "EVM" ? "EVM networks" : "Solana"}</button>)}
+      </div>}
+      {/* Keyed by the address, so changing it draws the new code in. */}
+      <div className="receive-qr" key={address}>
+        <AddressQr value={address} label={`QR code of your ${title} address`} />
+        <span className="receive-qr-mark">{network ? <ChainLogo networkId={network.networkId} name={network.name} size={26} /> : <ChainLogo networkId={works[0]?.networkId ?? ""} name={title} size={26} />}</span>
+      </div>
+      <button type="button" className="receive-address num" onClick={() => void copyIt()} aria-label={`Copy your ${title} address`} title="Copy">
+        <span data-testid="receive-address"><b>{head}</b>{middle}<b>{tail}</b></span>
+      </button>
+      <div className="receive-works">
+        <span className="receive-logos">{works.slice(0, 6).map(n => <ChainLogo key={n.networkId} networkId={n.networkId} name={n.name} size={20} />)}{works.length > 6 && <i>+{works.length - 6}</i>}</span>
+        <span>{network ? `Only on ${network.name}` : family === "EVM" ? `The same address on all ${works.length} EVM networks` : "Solana only"}</span>
+      </div>
+      {(network || family === "SOLANA") && <div className="confirm-warn" role="note"><AlertTriangle size={15} /><span>{network
+        ? <><b>Send only on {network.name}.</b> {network.family === "EVM" ? `Tokens sent on another network arrive there, not on ${network.name}.` : "Tokens sent from another network to this address can be lost."}</>
+        : <><b>Solana only.</b> Never send from an EVM network to this address.</>}</span></div>}
+    </div>
+    <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
+      <button type="button" className={`btn primary copy-btn${copied ? " done" : ""}`} onClick={() => void copyIt()}>{copied ? <Check size={17} /> : <Copy size={16} />}{copied ? "Copied" : "Copy address"}</button>
     </div>
     {picking && <NetworkSheet selected={prefs.network} showTestnets={prefs.showTestnets} onClose={() => setPicking(false)}
       onPick={async networkId => { setPicking(false); await settingsStore.write({ network: networkId }); setPrefs(await settingsStore.read()); }} />}
