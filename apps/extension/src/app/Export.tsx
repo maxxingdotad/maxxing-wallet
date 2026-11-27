@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Camera, Check, Clock3, Copy, EyeOff, KeyRound } from "lucide-react";
 import { Steps } from "../ui/parts";
+import { Metal } from "../ui/metal";
 import { PageHead, PasswordForm, canClearClipboard, copy, message } from "./kit";
 import * as wallet from "../lib/wallet";
 
@@ -37,18 +38,20 @@ export function HoldReveal({ title, words, secrets, step, onBack, onDone, doneLa
       <div className="alert warn" style={{ margin: "12px 0" }}><Camera size={16} /><span><b>No screenshots.</b> Write it on paper and keep it offline. MAXXING will never ask for it.</span></div>
       {words && <ol className={`phrase${shown ? "" : " blurred"}`} style={{ margin: 0 }}>
         {words.map((w, i) => <li key={i}><small>{i + 1}</small>{w}</li>)}
-        {!shown && <div className="veil"><EyeOff size={22} style={{ color: "var(--text-2)" }} /></div>}
+        {/* Hidden under a plate of liquid metal; holding the button pours it off, left to right. */}
+        {!shown && <div className="veil plate" style={{ ["--held" as string]: held }}><Metal fill /><i><EyeOff size={20} /></i></div>}
       </ol>}
       {secrets?.map(s => <div key={s.label} style={{ marginBottom: 10 }}>
         <div className="section-head" style={{ marginTop: 4 }}><h2>{s.label}</h2>{shown && copyable && <button type="button" onClick={() => doCopy(s.label, s.value)}>{copied === s.label ? "Copied · clears in 60s" : "Copy"}</button>}</div>
-        <div className="card" style={{ padding: 12, position: "relative" }}><div className="addr" style={{ filter: shown ? "none" : "blur(6px)", userSelect: shown ? "text" : "none" }}>{s.value}</div></div>
+        <div className="card" style={{ padding: 12, position: "relative" }}><div className="addr" style={{ filter: shown ? "none" : "blur(6px)", userSelect: shown ? "text" : "none" }}>{s.value}</div>
+          {!shown && <div className="veil plate" style={{ ["--held" as string]: held }}><Metal fill /><i><EyeOff size={18} /></i></div>}</div>
       </div>)}
       {shown && <div className="timer"><Clock3 size={13} /> Hides again in {left}s · <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setHeld(0)}>Hide now</button></div>}
     </div>
     <div className={shown ? "footer" : "footer glow-panel"} style={shown ? { position: "absolute", left: 0, right: 0, bottom: 0 } : undefined}>
       {shown
         ? <>{words && copyable && <button type="button" className="btn secondary" onClick={() => doCopy("phrase", words.join(" "))}><Copy size={16} />{copied ? "Copied · clears in 60s" : "Copy (clears in 60s)"}</button>}<button type="button" className="btn primary" onClick={onDone}>{doneLabel}</button></>
-        : <button type="button" className="btn primary hold" style={{ ["--held" as string]: held }} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!timer.current) start(); } }} onKeyUp={() => { stop(); timer.current = null; }}><span className="fill" /><span>Hold to reveal</span></button>}
+        : <button type="button" className="btn primary hold" style={{ ["--held" as string]: held }} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!timer.current) start(); } }} onKeyUp={() => { stop(); timer.current = null; }}><span className="fill"><Metal fill /></span><Metal /><span className="hold-label">Hold to reveal</span></button>}
     </div>
   </div>;
 }

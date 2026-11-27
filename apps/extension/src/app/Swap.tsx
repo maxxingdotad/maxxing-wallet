@@ -68,6 +68,8 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
   const [q, setQ] = useState<Quote | null>(null);
   const [quoting, setQuoting] = useState(false);
   const [error, setError] = useState(""), [reviewing, setReviewing] = useState(false);
+  /** The review shows three lines; this opens the breakdown of the fees and the steps. */
+  const [details, setDetails] = useState(false);
   const [progress, setProgress] = useState(""), [done, setDone] = useState<{ hashes: string[]; state: string } | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null), [prepareError, setPrepareError] = useState("");
   useEffect(() => { void settings.read().then(async s => { setAll(networks(s.showTestnets)); const p = await loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets, s.network); /* pay from the selected network */ setHoldings(p.holdings.filter(h => h.raw && BigInt(h.raw) > 0n)); }); }, [account.evm, account.solana]);
@@ -184,7 +186,12 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
         setDone({ hashes, state });
       } catch (e) { setError(message(e)); } finally { setProgress(""); setReviewing(false); }
     };
-    return <div className="popup confirm-screen" data-testid="swap-review">
+    // Every fee in dollars, added up: Relay's, MAXXING's, and the network fee where the quote prices it. Unknown parts are left out
+    // of the sum (and shown as "—" in the breakdown), never guessed.
+    const feeParts = [q.feesUsd, q.maxxingFee?.usd ?? null, prepared?.gasless ? null : q.networkFee?.usd ?? null].filter((v): v is number => v !== null);
+    const feeTotal = feeParts.length ? feeParts.reduce((a, b) => a + b, 0) : null;
+    const tokenWarnings = steps.flatMap(s => s.kind === "signature" ? [] : s.summary.tokenCall?.warning ? [s.summary.tokenCall.warning] : []);
+    return <div className={`popup confirm-screen${details ? " with-details" : ""}`} data-testid="swap-review">
       <PageHead title="Review swap" onBack={() => setReviewing(false)} />
       <div className="scroll confirm-scroll">
         {/* What goes in, what comes out: the one thing to look at. */}
@@ -193,38 +200,39 @@ export function SwapView({ account, onTab }: { account: Account; onTab: (t: Dock
           <BigAmount value={amount.replace(/,/g, "")} symbol={from.asset.symbol} />
           <div className="swap-arrow" aria-hidden="true"><ArrowDown size={16} /></div>
           <div className="swap-out num" title={q.amountOut}>{nice(q.amountOut)} <span>{to.symbol}</span></div>
-          <div className="confirm-usd">on {networkLabel(to.network)} · through Relay{q.timeSeconds ? ` · ~${q.timeSeconds} s` : ""}</div>
+          <div className="confirm-usd">on {networkLabel(to.network)}{q.timeSeconds ? ` · about ${q.timeSeconds < 1 ? "a second" : `${q.timeSeconds} s`}` : ""}</div>
         </div>
+        {/* Only what needs attention shows by itself: a bad price, a risky approval, an error. */}
         <div className="confirm-warnings">
           {(q.impactPercent ?? 0) <= -3 && <div className="confirm-warn danger"><AlertTriangle size={15} /><span><b>High price impact: {q.impactPercent?.toFixed(2)}%.</b> You'd get noticeably less than the amount is worth.</span></div>}
+          {tokenWarnings.map((w, i) => <div key={i} className="confirm-warn"><AlertTriangle size={15} /><span>{w}</span></div>)}
           {(reviewError || error) && <div className="confirm-warn danger" role="alert"><AlertTriangle size={15} /><span>{reviewError || error}</span></div>}
         </div>
-        <div className="section-head"><h2>{what}</h2></div>
-        {steps.map((s, i) => s.kind === "signature"
-          ? <div key={i} className="card" style={{ padding: 12 }} data-testid="gasless-step">
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i + 1}. {s.label}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{s.text}</div>
-              <div style={{ fontSize: 11.5, color: "var(--dim)", marginTop: 4 }}>{s.summary.kind} · {s.summary.app ?? "token"} · {s.summary.network ?? ""}</div>
-            </div>
-          : <div key={i} className="card" style={{ padding: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{i + 1}. {s.summary.tokenCall?.text ?? s.label}</div>
-              <div style={{ fontSize: 12, color: "var(--muted)" }}>{s.summary.network} · sends {s.summary.amount} · to {s.transaction.to?.slice(0, 8)}…{s.transaction.to?.slice(-6)} ({s.transaction.data?.startsWith("0x095ea7b3") ? "your token, letting only a Relay contract spend it" : "a Relay contract"}) · fee at most {Number(formatUnits(s.maxFee, 18)).toPrecision(3)}</div>
-              {s.summary.tokenCall?.warning && <div className="alert warn" style={{ marginTop: 8 }}><AlertTriangle size={15} /><span>{s.summary.tokenCall.warning}</span></div>}
-            </div>)}
-        <p style={{ fontSize: 11.5, color: "var(--muted)", margin: 0 }}>{prepared?.gasless
-          ? "Gasless: you sign an authorization for exactly this amount; Relay sends the transaction and takes the network fee out of the swap."
-          : `You pay the network fee in ${from.asset.network.nativeSymbol}.`}</p>
+        {/* The steps, for whoever wants them: opened with the fees. */}
+        {details && <div className="swap-steps" data-testid="swap-steps">
+          <div className="section-head" style={{ marginTop: 0 }}><h2>{what}</h2></div>
+          {steps.map((s, i) => s.kind === "signature"
+            ? <div key={i} className="swap-step" data-testid="gasless-step"><b>{i + 1}. {s.label}</b><small>{s.text}</small></div>
+            : <div key={i} className="swap-step"><b>{i + 1}. {s.summary.tokenCall?.text ?? s.label}</b>
+                <small>To {s.transaction.to?.slice(0, 8)}…{s.transaction.to?.slice(-6)}, {s.transaction.data?.startsWith("0x095ea7b3") ? "your token: only a Relay contract may spend it" : "a Relay contract"}</small></div>)}
+        </div>}
       </div>
-      {/* The numbers and the one button, on the same glowing panel as Send. */}
+      {/* Three lines and the one button, on the same glowing panel as Send. A tap on the fees opens every one of them. */}
       <div className="confirm-panel">
         <div className="confirm-rows">
-          <div><span>Minimum received</span><b>{q.minimumOut ?? "—"} {to.symbol}</b></div>
-          <div><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : undefined }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
-          <div><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
-          <MaxxingFeeRow q={q} />
-          {prepared && (prepared.gasless
-            ? <div><span>Network fee</span><b>Paid from the swap</b></div>
-            : <div><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
+          <div><span>You get at least</span><b className="num">{q.minimumOut ?? "—"} {to.symbol}</b></div>
+          <button type="button" className="fees-row" aria-expanded={details} data-testid="swap-fees" onClick={() => setDetails(d => !d)}>
+            <span>Fees, in total</span><b className="num">{feeTotal === null ? "—" : feeTotal < 0.01 ? "< $0.01" : `≈ ${usd(feeTotal)}`}<ChevronDown size={15} className="chev" /></b>
+          </button>
+          {details && <div className="fee-breakdown">
+            <div><span>Relay's fees (in the price)</span><b>{q.feesUsd === null ? "—" : usd(q.feesUsd)}</b></div>
+            <MaxxingFeeRow q={q} />
+            {prepared && (prepared.gasless
+              ? <div><span>Network fee</span><b>Paid from the swap</b></div>
+              : <div><span>Network fee, at most</span><b className="num">{Number(formatUnits(prepared.maxFee, 18)).toPrecision(3)} {prepared.nativeSymbol}</b></div>)}
+            <div><span>Price impact</span><b style={{ color: (q.impactPercent ?? 0) <= -3 ? "var(--negative)" : undefined }}>{q.impactPercent === null ? "—" : `${q.impactPercent.toFixed(2)}%`}</b></div>
+          </div>}
+          {!details && <div className="quiet-row"><span>{prepared?.gasless ? "No network fee from you" : `${steps.length} signature${steps.length === 1 ? "" : "s"}`}</span><b>through Relay</b></div>}
         </div>
         <HoldButton label="Swap" busyLabel="Swapping…" disabled={!!reviewError || !prepared} onConfirm={run} />
       </div>

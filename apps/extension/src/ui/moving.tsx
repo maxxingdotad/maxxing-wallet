@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Spring, frameLoop, reducedMotion } from "./motion";
+import { Metal } from "./metal";
 
 /**
  * Hold to confirm: press and keep holding (mouse, touch, or Space/Enter) and the fill charges up; let go early and it springs
@@ -72,7 +73,9 @@ export function HoldButton({ label, busyLabel, onConfirm, disabled }: {
   }, [plain]);
   return <button ref={ref} type="button" className="btn primary hold-btn" disabled={disabled || fired} data-testid="hold-to-confirm"
     onClick={plain ? () => { if (!done.current) fire(); } : e => e.preventDefault()} aria-label={plain ? label : `${label}: press and hold`}>
-    <span className="hold-fill" aria-hidden="true" />
+    {/* Holding pours liquid metal across the button; its rim is the same metal, always moving. */}
+    <span className="hold-fill" aria-hidden="true"><Metal fill /></span>
+    <Metal />
     <span className="hold-label">{fired && busyLabel ? busyLabel : plain ? label : `Hold to ${label.toLowerCase()}`}</span>
   </button>;
 }

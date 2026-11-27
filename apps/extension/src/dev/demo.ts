@@ -73,6 +73,8 @@ function evmAnswer(networkId: string | null, method: string, params: unknown[]):
         const row = SAMPLE.evm.find(r => r[0] === networkId && r[1].toLowerCase() === call.to?.toLowerCase());
         return `0x${BigInt(row?.[5] ?? "0").toString(16).padStart(64, "0")}`;
       }
+      // An allowance, once something was "sent" here (the route's approval): enough, so a swap's deposit step goes on.
+      if (call.data?.startsWith("0xdd62ed3e") && sent.size) return `0x${"f".repeat(64)}`;
       return `0x${"0".repeat(64)}`;
     }
     case "eth_sendRawTransaction": { const hash = randomHex(32); sent.add(hash); return hash; }
@@ -115,6 +117,12 @@ const coinPrice = (networkId: string) => {
   }
   return live.get(networkId)!;
 };
+/** A market id's price in test mode: the network's coin (asked as its wrapped token) at today's price; anything else a dollar. */
+const demoPrice = async (id: string) => {
+  const networkId = id.split(":").slice(0, 2).join(":"), token = id.split(":").slice(2).join(":").toLowerCase();
+  const stable = [...SAMPLE.evm, ...SAMPLE.solana].some(r => !r[2] && r[1].toLowerCase() === token);
+  return stable ? 1 : (await coinPrice(networkId)) ?? 1650;
+};
 window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
   const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
   if (url.startsWith(`${API_URL}/v1/public/wallets/`)) {
@@ -125,6 +133,23 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const valueUsd = now === null ? written : (Number(balanceRaw) / 10 ** decimals * now).toFixed(2);
       return { chainId, address, native, symbol, name, imageUrl: null, balanceRaw, decimals, valueUsd };
     })) });
+  }
+  // Prices and candles (the Data API doesn't answer a page on localhost): the coin's price from Relay, a dollar for the sample's
+  // dollar coins, and a made-up but steady walk of candles ending at that price, so the token screen's chart can be looked at.
+  if (url.startsWith(`${API_URL}/v1/public/prices`)) {
+    const ids = decodeURIComponent(url.split("ids=")[1] ?? "").split(",").filter(Boolean);
+    return json({ items: await Promise.all(ids.map(async id => ({ id, priceUsd: String(await demoPrice(id)), change24hPct: "-1.84" }))) });
+  }
+  if (url.startsWith(`${API_URL}/v1/public/tokens/`) && url.includes("/candles")) {
+    const [networkId, token] = url.split("/tokens/")[1]!.split("/").map(decodeURIComponent);
+    const query = new URL(url).searchParams, seconds = ({ "5m": 300, "15m": 900, "1h": 3600, "4h": 14_400, "1d": 86_400 } as Record<string, number>)[query.get("interval") ?? "1h"] ?? 3600;
+    const count = Math.min(Number(query.get("limit") ?? 24), 400), end = await demoPrice(`${networkId}:${token}`), now = Math.floor(Date.now() / 1000 / seconds) * seconds;
+    // The same token and interval always draw the same line: a seeded walk, read backwards from today's price.
+    let seed = [...`${token}${seconds}`].reduce((s, c) => (s * 31 + c.charCodeAt(0)) >>> 0, 7), close = end;
+    const next = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32 - 0.5; };
+    const swing = end === 1 ? 0.0004 : 0.012 * Math.sqrt(seconds / 3600);
+    const items = Array.from({ length: count }, (_, i) => { const item = { time: now - i * seconds, close: String(close) }; close *= 1 + next() * swing + Math.sin(i / 9) * swing * 0.35; return item; }).reverse();
+    return json({ items });
   }
   // Relay's status for a swap "sent" here: delivered.
   if (url.startsWith(`${RELAY_API}/intents/status`)) return json({ status: "success" });

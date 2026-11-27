@@ -2,6 +2,7 @@ import { useEffect, useId, useState, type ReactNode } from "react";
 import { ArrowLeftRight, Clock3, House, Settings } from "lucide-react";
 import { KNOWN_SOLANA_MINTS, knownTokens } from "@maxxing/wallet-core/chains";
 import { ChainLogo, TokenLogo } from "./logos";
+import { Metal } from "./metal";
 
 /** A chain as the screens show it: a logo when the repo has one, else its initial on its color. */
 export type ChainMark = { id: string; name: string; color: string; logo?: string };
@@ -88,7 +89,10 @@ export function Orbit({ total, change, shares, note, hidden }: { total: number; 
     </svg>
     <div className="orbit-center">
       <small>One balance · {shares.length} chains</small>
-      <div className="balance num" data-testid="total">{hidden ? "$••••" : <><Rolling text={whole!} /><span className="cents"><Rolling text={`.${cents}`} /></span></>}</div>
+      {/* The total is cut out of liquid metal: the chrome flows behind, and only the digits let it through. */}
+      <div className="balance-metal"><Metal fill />
+        <div className="balance num" data-testid="total">{hidden ? "$••••" : <><Rolling text={whole!} /><span className="cents"><Rolling text={`.${cents}`} /></span></>}</div>
+      </div>
       {change !== null
         ? <span className={`delta ${change >= 0 ? "up" : "down"}`}>{change >= 0 ? "▲" : "▼"} {Math.abs(change).toFixed(2)}% today</span>
         : note ? <span className="delta" style={{ color: "var(--muted)", background: "var(--surface-2)" }}>{note}</span> : null}
@@ -114,6 +118,9 @@ export function Rolling({ text }: { text: string }) {
   })}</span></span>;
 }
 
+/** The disc of a round action (Send, Receive, Swap): dark glass in a liquid metal ring. */
+export function ActionDisc({ children }: { children: ReactNode }) { return <i><Metal />{children}</i>; }
+
 export type DockTab = "home" | "swap" | "activity" | "settings";
 /** The floating glass dock from the mobile app, with the violet glow gliding to the open tab. */
 let lastDockIndex = 0;
@@ -129,7 +136,8 @@ export function Dock({ tab, onTab }: { tab: DockTab; onTab?: (tab: DockTab) => v
   const [at, setAt] = useState(lastDockIndex);
   useEffect(() => { lastDockIndex = index; const frame = requestAnimationFrame(() => setAt(index)); return () => cancelAnimationFrame(frame); }, [index]);
   return <nav className="dock" aria-label="Wallet" style={{ ["--glow" as string]: `${(index - 1.5) * 100}%`, ["--at" as string]: at }}>
-    <span className="dock-thumb" aria-hidden="true" />
+    <Metal className="dock-rim" />
+    <span className="dock-thumb" aria-hidden="true"><Metal /></span>
     {tabs.map(t => <button key={t.id} type="button" className={`tab${t.id === tab ? " on" : ""}`} aria-label={t.label} aria-current={t.id === tab ? "page" : undefined} onClick={() => onTab?.(t.id)}>
       {t.id === "home" ? <img src="/brand/cap-neutral.webp" alt="" /> : t.icon}
     </button>)}

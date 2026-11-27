@@ -558,14 +558,47 @@ button:focus-visible, [role="switch"]:focus-visible, input:focus-visible, select
 .frame > span { font-size: 12px; color: var(--muted); font-weight: 600; letter-spacing: .02em; }
 .frame > .popup { border-radius: 14px; border: 1px solid var(--line-strong); box-shadow: 0 30px 60px rgb(0 0 0 / .5); }
 
-/* Token screen: logo and price up top, a range switch, the price line, then holdings per network. */
-.token-hero { display: flex; align-items: center; gap: 14px; margin: 4px 2px 6px; }
-.token-name { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); font-weight: 600; }
-.token-price { font-size: 26px; font-weight: 700; letter-spacing: -.01em; display: flex; align-items: baseline; gap: 8px; }
-.chg { font-size: 13px; font-weight: 600; padding: 2px 7px; border-radius: 8px; background: var(--surface-2); }
-.chg.up { color: var(--text); } .chg.down { color: var(--negative); background: var(--negative-soft); }
-.price-chart { display: block; width: 100%; height: 120px; }
-.chart-empty { height: 120px; display: grid; place-items: center; font-size: 12px; color: var(--muted); }
+/* Token screen: the token's name, its price large, then the chart across the whole screen (no box), the ranges, and holdings. */
+.token-hero { display: flex; align-items: center; gap: 10px; margin: 2px 2px 10px; }
+.token-name { display: flex; align-items: center; gap: 6px; font-size: 14px; color: var(--text-2); font-weight: 600; }
+.token-price { margin: 0 2px; min-height: 44px; font-size: 40px; font-weight: 700; letter-spacing: -.035em; line-height: 1.1; }
+.token-price .muted { font-size: 22px; letter-spacing: -.01em; }
+.token-change { display: flex; align-items: baseline; gap: 7px; margin: 2px 2px 0; min-height: 20px; font-size: 13.5px; }
+.token-change b { font-weight: 650; }
+.token-change span { color: var(--muted); }
+.token-change.up b { color: var(--positive); } .token-change.down b { color: var(--negative); }
+.chart-bleed { margin: 6px -16px 0; }
+.chart-wait { height: 208px; border-radius: 0; opacity: .5; }
+.chart { position: relative; height: 208px; touch-action: pan-y; cursor: crosshair; user-select: none; }
+.chart.up { color: var(--positive); } .chart.down { color: var(--negative); }
+.chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.chart-line { stroke: currentColor; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; filter: drop-shadow(0 0 6px currentColor); animation: chart-draw .9s var(--ease) both; stroke-dasharray: 1400; }
+@keyframes chart-draw { from { stroke-dashoffset: 1400; } to { stroke-dashoffset: 0; } }
+.chart-start { stroke: rgb(255 255 255 / .2); stroke-width: 1; stroke-dasharray: 2 5; }
+.chart-mark { position: absolute; transform: translateX(-50%); font-size: 11px; font-weight: 600; color: var(--text-2); white-space: nowrap; pointer-events: none; transition: opacity .15s; }
+.chart-mark.start { transform: none; margin-left: 6px; } .chart-mark.end { transform: translateX(-100%); margin-left: -6px; }
+.chart.scrubbing .chart-mark { opacity: .35; }
+.chart-cursor { position: absolute; top: 14px; bottom: 6px; width: 1px; background: linear-gradient(180deg, transparent, rgb(255 255 255 / .5) 18%, rgb(255 255 255 / .5) 82%, transparent); pointer-events: none; }
+/* Where the price is: a chrome bead on the line. Live (not scrubbing), a ring breathes out from it. */
+.chart-dot { position: absolute; width: 11px; height: 11px; margin: -5.5px 0 0 -5.5px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle at 35% 30%, #fff, #c9ced8 45%, #5d626c); box-shadow: 0 0 0 2px #050506, 0 0 12px currentColor; }
+.chart-dot.live { margin-left: -15px; } /* now is at the screen's edge: the bead sits just inside it */
+.chart-dot.live::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 1.5px solid currentColor; animation: chart-ping 2.2s ease-out infinite; }
+@keyframes chart-ping { from { transform: scale(.8); opacity: .9; } to { transform: scale(3); opacity: 0; } }
+.chart-empty { height: 208px; display: grid; place-items: center; font-size: 12.5px; color: var(--muted); }
+/* Ranges: plain words in a row; the chosen one sits in a liquid metal ring. */
+.ranges { display: flex; justify-content: space-between; margin: 4px 2px 0; }
+.ranges button { position: relative; min-width: 52px; height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 650; color: var(--muted); transition: color .2s; }
+.ranges button:hover { color: var(--text-2); }
+.ranges button.on { color: var(--text); background: rgb(255 255 255 / .05); }
+@media (prefers-reduced-motion: reduce) { .chart-line { animation: none; stroke-dasharray: none; } .chart-dot.live::after { animation: none; opacity: 0; } }
+
+/* Liquid metal (ui/metal.tsx): a rim of flowing chrome on its parent. `--rim` is its width; `.fill` covers the parent. */
+.metal { position: absolute; inset: 0; border-radius: inherit; padding: var(--rim, 2px); pointer-events: none; overflow: hidden;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+.metal.fill { padding: 0; -webkit-mask: none; mask: none; }
+.metal canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .muted { color: var(--muted); font-size: 15px; font-weight: 500; }
 
 /* Activity: day headers, a status tag per transaction, and the explorer link. */
@@ -761,3 +794,111 @@ button.site-network svg:last-child { color: var(--muted); }
 .asset-field .main small { font-size: 12px; color: var(--muted); font-weight: 500; }
 .asset-field .end { font-size: 14px; font-weight: 600; }
 .asset-field .chev { color: var(--muted); flex-shrink: 0; }
+
+/* ── Liquid metal on the controls that carry the wallet ─────────────────────────────────────────────────────────────────
+   The dock's edge and its lit tab, the hold-to-confirm button, and the token chart's chosen range are rimmed in the flowing
+   chrome of ui/metal.tsx. Ordinary main buttons are a still bar of the same polished steel. Nothing else wears it. */
+.dock::before { content: none; }
+.dock .dock-rim { --rim: 2px; opacity: .9; z-index: 0; }
+.dock-thumb { --rim: 2px; background: radial-gradient(120% 140% at 50% 0%, rgb(255 255 255 / .16), rgb(255 255 255 / .03) 60%), #0a0a0c;
+  box-shadow: 0 6px 16px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .12); }
+.btn.primary, .brand-actions .btn.primary, .unlock .pw-form .btn.primary {
+  background: linear-gradient(180deg, #ffffff 0%, #f2f4f8 40%, #d6dae3 56%, #edf0f5 74%, #ffffff 100%); color: #0b0b0d;
+  box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgb(0 0 0 / .28), 0 8px 20px rgb(0 0 0 / .45); }
+.btn.primary.hold-btn, .confirm-panel .hold-btn, .footer .btn-row .hold-btn {
+  --rim: 2.5px; background: radial-gradient(120% 160% at 50% -20%, rgb(255 255 255 / .13), transparent 60%), #0a0a0c; color: #fff;
+  box-shadow: 0 10px 26px rgb(0 0 0 / .6); }
+/* Holding pours the metal in from the left; the words stay readable by taking the opposite of whatever is behind them. */
+.hold-btn .hold-fill { transform: none; background: none; clip-path: inset(0 calc((1 - var(--charge)) * 100%) 0 0); }
+.hold-btn .hold-label { z-index: 1; mix-blend-mode: difference; color: #fff; }
+.hold-btn:disabled .metal { opacity: .3; }
+.btn.primary.hold-btn:disabled { background: #0a0a0c; box-shadow: none; }
+
+/* The total: liquid metal seen through the digits. The canvas flows behind; the number is white on black and multiplies with
+   it, so black stays black and the digits become chrome. The metal is lifted (brighter, flatter) so every digit stays readable. */
+.balance-metal { position: relative; isolation: isolate; display: inline-block; margin: 6px 0 8px; background: #000; }
+.balance-metal .metal canvas { filter: contrast(.42) brightness(1.9); }
+.balance-metal .balance { position: relative; margin: 0; padding: 0 8px; background: #000; color: #fff; mix-blend-mode: multiply; }
+.balance-metal .balance .cents { color: rgb(255 255 255 / .55); }
+/* The round actions: discs of dark glass, each in its own liquid ring. All four alike; none is flat white. */
+.action i, .action:first-child i { position: relative; --rim: 2px; color: #fff;
+  background: radial-gradient(120% 120% at 50% 0%, rgb(255 255 255 / .16), rgb(255 255 255 / .02) 62%), #0a0a0c; box-shadow: 0 8px 18px rgb(0 0 0 / .6); }
+.action i svg { position: relative; }
+.action:hover i { background: radial-gradient(120% 120% at 50% 0%, rgb(255 255 255 / .24), rgb(255 255 255 / .04) 62%), #0a0a0c; }
+
+/* ── Poured surfaces, not outlined boxes ────────────────────────────────────────────────────────────────────────────────
+   A surface is a slab lit from above: lighter at its top edge, falling to almost nothing, with a shadow under it. No line is
+   drawn around anything. Fields are the opposite: wells pressed into the page, dark with a lit lower lip. */
+.card, .swap-card, .stale-note, .change, .check, .message-box, .toast, .alert:not(.warn):not(.danger) {
+  border: 0; background: linear-gradient(180deg, rgb(255 255 255 / .075), rgb(255 255 255 / .03) 42%, rgb(255 255 255 / .022));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .11), inset 0 -1px 0 rgb(0 0 0 / .5), 0 16px 26px -18px #000; }
+.toast { background: linear-gradient(180deg, #26262b, #18181b); }
+.row, .fact { border-bottom: 0; }
+.row + .row, .fact + .fact { box-shadow: inset 0 1px 0 rgb(255 255 255 / .045); }
+.card.rows { overflow: hidden; }
+.card.rows .asset-row { border-radius: 0; }
+.chip, .seg button, .swap-asset { border: 0; background: linear-gradient(180deg, rgb(255 255 255 / .11), rgb(255 255 255 / .045)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .12), 0 4px 10px -4px #000; }
+.seg button.on { background: linear-gradient(180deg, #ffffff 0%, #f2f4f8 40%, #d6dae3 56%, #edf0f5 74%, #ffffff 100%); color: var(--ink); box-shadow: inset 0 1px 0 #fff, 0 6px 14px -6px #000; }
+.amount-box, .pw-input, .search { border: 0; background: #050506; box-shadow: inset 0 2px 5px #000, inset 0 -1px 0 rgb(255 255 255 / .09), inset 0 0 0 1px rgb(255 255 255 / .03); }
+.amount-box:focus-within, .pw-input:focus, .search:focus { box-shadow: inset 0 2px 5px #000, inset 0 -1px 0 rgb(255 255 255 / .09), 0 0 0 1.5px rgb(214 218 227 / .7); }
+.btn.primary:disabled, .unlock .pw-form .btn.primary:disabled, .brand-actions .btn.primary:disabled {
+  background: linear-gradient(180deg, rgb(255 255 255 / .07), rgb(255 255 255 / .03)); color: rgb(255 255 255 / .38); box-shadow: inset 0 1px 0 rgb(255 255 255 / .08); }
+.search:focus-visible, .pw-input:focus-visible { outline: none; }
+
+/* ── The same metal on the screens around the wallet ────────────────────────────────────────────────────────────────────
+   The wallet's name is cut from it (like the total); a secret lies under a plate of it until the hold pours it off; the open
+   account wears a ring of it; waiting is an arc of it turning. */
+.liquid-text { position: relative; isolation: isolate; display: inline-block; background: #000; }
+.liquid-text .metal canvas { filter: contrast(.42) brightness(1.9); }
+.liquid-text .liquid-ink { position: relative; display: block; padding: 0 6px; background: #000; color: #fff; mix-blend-mode: multiply; }
+.veil.plate { position: absolute; inset: 0; z-index: 1; border-radius: inherit; overflow: hidden; display: grid; place-items: center; background: #0a0a0c;
+  clip-path: inset(0 0 0 calc(var(--held, 0) * 100%)); }
+.veil.plate .metal canvas { filter: brightness(.8); }
+.veil.plate i { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .6); color: #fff; box-shadow: 0 6px 16px rgb(0 0 0 / .5); }
+.btn.primary.hold { --rim: 2.5px; background: radial-gradient(120% 160% at 50% -20%, rgb(255 255 255 / .13), transparent 60%), #0a0a0c; color: #fff; box-shadow: 0 10px 26px rgb(0 0 0 / .6); }
+.hold .metal { position: absolute; }
+.hold .fill { transform: none; transition: none; background: none; clip-path: inset(0 calc((1 - var(--held, 0)) * 100%) 0 0); }
+.hold .hold-label { z-index: 1; mix-blend-mode: difference; color: #fff; }
+.rail-item.on .rail-bubble::before { content: none; }
+.rail-bubble .metal { display: none; inset: -4px; --rim: 2.5px; }
+.rail-item.on .rail-bubble .metal { display: block; }
+.rail-back { color: #fff; background: linear-gradient(180deg, rgb(255 255 255 / .16), rgb(255 255 255 / .05)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .18), 0 8px 16px -8px #000; }
+/* The cap fills the bottom of the brand screens: wider than the popup, so its sides run off the edges instead of leaving gaps. */
+.brand-cap { height: 262px; }
+.brand-cap img { width: 470px; margin-left: -235px; top: 6px; }
+.brand-body { padding-bottom: 232px; }
+.unlock .scroll { padding-bottom: 232px; }
+
+/* Token screen: the top bar is the token (logo, name, menu), so nothing is said twice below it. */
+.token-head { justify-content: flex-start; gap: 8px; }
+.token-head .token-name { flex: 1; min-width: 0; font-size: 15px; color: var(--text); white-space: nowrap; }
+.token-head .token-name b { font-weight: 650; overflow: hidden; text-overflow: ellipsis; }
+.menu-scrim { position: fixed; inset: 0; z-index: 30; }
+.menu { position: absolute; z-index: 31; top: 48px; right: 10px; width: 236px; padding: 6px; border-radius: 16px; background: linear-gradient(180deg, #25252a, #151517);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .13), 0 18px 40px rgb(0 0 0 / .75); animation: rise .18s var(--ease); }
+.menu button { width: 100%; display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 10px; border-radius: 10px; font-size: 13.5px; font-weight: 550; text-align: left; color: var(--text); }
+.menu button:hover { background: rgb(255 255 255 / .07); }
+.menu button svg { color: var(--text-2); flex-shrink: 0; }
+.menu small { display: block; padding: 6px 10px 4px; font-size: 10.5px; line-height: 1.45; color: var(--dim); word-break: break-all; }
+
+/* Swap review: three lines. The fees line opens every fee and the steps; closed, nothing else competes with the amounts. */
+.fees-row { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 2px; font-size: 13.5px; text-align: left; border-top: 1px solid rgb(255 255 255 / .06); }
+.fees-row span { color: var(--muted); }
+.fees-row b { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; color: #fff; }
+.fees-row .chev { color: var(--muted); transition: transform .2s var(--ease); }
+.fees-row[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.confirm-rows > .fee-breakdown { display: block; margin: 0 0 6px; padding: 2px 10px; border: 0; border-radius: 12px; background: rgb(255 255 255 / .045); }
+.fee-breakdown > div, .fee-breakdown > .fact { display: flex; justify-content: space-between; gap: 12px; padding: 7px 0; font-size: 12.5px; border: 0; box-shadow: none; }
+.fee-breakdown span { color: var(--muted); }
+.fee-breakdown b { font-weight: 500; color: #fff; }
+.confirm-rows > .quiet-row { padding-top: 9px; padding-bottom: 9px; }
+.quiet-row span, .confirm-rows > .quiet-row b { font-size: 12.5px; font-weight: 500; color: var(--dim); }
+.with-details .swap-hero { min-height: 0; flex: none; padding: 0 0 10px; }
+.with-details .swap-hero .big-amount, .with-details .swap-hero .swap-out { transform: scale(.78); margin: -4px 0; }
+.swap-step { padding: 7px 2px; }
+.swap-step b { display: block; font-size: 13px; font-weight: 600; }
+.swap-step small { display: block; margin-top: 2px; font-size: 11.5px; line-height: 1.4; color: var(--muted); }
+
+.spinner.liquid { position: relative; width: 22px; height: 22px; border: 0; --rim: 3px;
+  -webkit-mask: conic-gradient(transparent 6%, #000 72%); mask: conic-gradient(transparent 6%, #000 72%); }
+.btn.secondary { border: 0; background: linear-gradient(180deg, rgb(255 255 255 / .12), rgb(255 255 255 / .05)); box-shadow: inset 0 1px 0 rgb(255 255 255 / .14), 0 8px 16px -8px #000; }

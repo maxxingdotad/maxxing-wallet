@@ -71,12 +71,17 @@ export async function prices(assets: { networkId: string; address: string | null
   return out;
 }
 
-export type Range = "24h" | "7d";
-/** Closing prices over the range: 24 hourly points, or 42 four-hourly points. */
+export type Range = "1H" | "1D" | "1W" | "1M" | "All";
+/** Each range's candles: how long one is, and how many cover the range. "All" is every daily candle the market has. */
+export const RANGES: Record<Range, readonly [interval: string, limit: number]> = { "1H": ["5m", 12], "1D": ["15m", 96], "1W": ["1h", 168], "1M": ["4h", 180], All: ["1d", 1000] };
+/**
+ * Closing prices over the range, oldest first. A token the market has followed for less time than the range answers with what
+ * there is (the screen says how far back that goes, from the points' own times).
+ */
 export async function chart(networkId: string, address: string | null, range: Range): Promise<{ time: number; close: number }[]> {
   const token = marketToken(networkId, address);
   if (!token) return [];
-  const [interval, limit] = range === "24h" ? ["1h", 24] : ["4h", 42];
+  const [interval, limit] = RANGES[range];
   const body = await get<{ items: { time: number; close: string }[] }>(`/v1/public/tokens/${encodeURIComponent(networkId)}/${encodeURIComponent(token)}/candles?interval=${interval}&limit=${limit}`);
   return (body?.items ?? []).map(c => ({ time: c.time, close: Number(c.close) })).filter(c => Number.isFinite(c.close) && c.close > 0);
 }

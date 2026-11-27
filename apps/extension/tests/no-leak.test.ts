@@ -377,6 +377,7 @@ test("only reviewed files reach the network, other windows, the clipboard or the
     "src/app/Send.tsx": ["tabs.create"],                    // the sent transaction on the explorer
     "src/app/Swap.tsx": ["tabs.create"],                    // the swap's transaction on the explorer
     "src/app/Activity.tsx": ["tabs.create"],                // a past transaction on the explorer
+    "src/app/TokenDetail.tsx": ["tabs.create"],             // a token's public contract page on its network's explorer
     "src/app/kit.tsx": ["clipboard", "offscreen", "sendMessage"], // copy; for secrets, asks the background to clear the clipboard (Chrome only)
     "src/background.ts": ["offscreen", "sendMessage", "storage", "windows.create"], // the approval window; declines to the asking page; clipboard clear
     "src/content.ts": ["postMessage", "sendMessage"],       // carries the page's requests and the answers

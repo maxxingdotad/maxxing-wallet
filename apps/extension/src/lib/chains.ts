@@ -59,6 +59,10 @@ export function registryNameTaken(name: string): string | null {
 /** A network's name with who added it, where only text fits (a select's options): "Local Test (added by you)". */
 export const networkLabel = (n: Pick<Network, "name" | "custom" | "addedBy">) =>
   !n.custom ? n.name : `${n.name} (added by ${n.custom === "site" && n.addedBy ? (() => { try { return new URL(n.addedBy!).host; } catch { return "a site"; } })() : "you"})`;
+/** A token's page on the network's explorer (its contract on EVM, its mint on Solana), or null without an explorer. */
+export const explorerToken = (chain: SdkChain, address: string) => chain.explorerUrl ? chain.family === "SOLANA"
+  ? `${chain.explorerUrl.replace(/\/?(\?.*)?$/, "")}/address/${address}${chain.explorerUrl.includes("?") ? chain.explorerUrl.slice(chain.explorerUrl.indexOf("?")) : ""}`
+  : `${chain.explorerUrl.replace(/\/$/, "")}/token/${address}` : null;
 export const explorerTx = (chain: SdkChain, hash: string) => chain.explorerUrl ? chain.family === "SOLANA"
   ? `${chain.explorerUrl.replace(/\/?(\?.*)?$/, "")}/tx/${hash}${chain.explorerUrl.includes("?") ? chain.explorerUrl.slice(chain.explorerUrl.indexOf("?")) : ""}`
   : `${chain.explorerUrl.replace(/\/$/, "")}/tx/${hash}` : null;

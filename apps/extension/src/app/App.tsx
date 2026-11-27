@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, DollarSign, FlaskConical, KeySquare, Pencil, ScrollText, Settings as SettingsIcon, Timer, UserPlus } from "lucide-react";
 import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Code2, ExternalLink, Eye, EyeOff, Globe, KeyRound, LifeBuoy, Lock, LogOut, Maximize2, PanelRight, Plus, RefreshCw, ShieldCheck, Trash2, Download } from "lucide-react";
-import { Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
+import { ActionDisc, Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, PasswordForm, copy, message, useEscape, useToast } from "./kit";
 import { Onboarding } from "./Onboarding";
 import { BrandCap, BrandMark } from "../ui/screens/Welcome";
+import { Metal } from "../ui/metal";
 import { ExportFlow } from "./Export";
 import { SendView } from "./Send";
 import { SwapView } from "./Swap";
@@ -43,7 +44,7 @@ const bubbleMark = (label: string) => {
 function Bubble({ w, index }: { w: WalletSummary; index?: number }) {
   const a = asAccount(w, index);
   const mark = bubbleMark(a.name);
-  return <span className={`rail-bubble${mark.length > 3 ? " small" : ""}`} style={{ ["--c" as string]: a.color }}>{mark}</span>;
+  return <span className={`rail-bubble${mark.length > 3 ? " small" : ""}`} style={{ ["--c" as string]: a.color }}><Metal />{mark}</span>;
 }
 
 type View = { name: "home" } | { name: "old-wallets" } | { name: "manage-assets" } | { name: "token"; holding: Holding; all: Holding[] } | { name: "send"; holding?: Holding } | { name: "receive" } | { name: "swap" } | { name: "activity" } | { name: "settings" } | { name: "export"; kind: "phrase" | "keys" } | { name: "add"; kind: "create" | "import" } | { name: "remove" } | { name: "sites" } | { name: "approvals" } | { name: "change-password" } | { name: "networks" } | { name: "network"; networkId: string } | { name: "add-network" };
@@ -201,10 +202,10 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
     <div className="scroll">
       <Orbit hidden={!!prefs?.hideBalances} total={portfolio?.totalUsd ?? 0} change={null} shares={[...byChain.values()]} note={!portfolio ? "Reading your balances…" : portfolio.source === "chain" ? "USD shown for stablecoins" : undefined} />
       <div className="actions">
-        <button type="button" className="action" onClick={() => go({ name: "send" })}><i><ArrowUpRight size={18} /></i>Send</button>
-        <button type="button" className="action" onClick={() => go({ name: "receive" })}><i><ArrowDownLeft size={18} /></i>Receive</button>
-        <button type="button" className="action" onClick={() => go({ name: "swap" })}><i><ArrowLeftRight size={18} /></i>Swap</button>
-        <button type="button" className="action" onClick={() => void chrome.tabs.create({ url: "https://maxxing.ad" })}><i><Plus size={18} /></i>Buy</button>
+        <button type="button" className="action" onClick={() => go({ name: "send" })}><ActionDisc><ArrowUpRight size={18} /></ActionDisc>Send</button>
+        <button type="button" className="action" onClick={() => go({ name: "receive" })}><ActionDisc><ArrowDownLeft size={18} /></ActionDisc>Receive</button>
+        <button type="button" className="action" onClick={() => go({ name: "swap" })}><ActionDisc><ArrowLeftRight size={18} /></ActionDisc>Swap</button>
+        <button type="button" className="action" onClick={() => void chrome.tabs.create({ url: "https://maxxing.ad" })}><ActionDisc><Plus size={18} /></ActionDisc>Buy</button>
       </div>
       {wallet.needingOldPin().length > 0 && <div className="alert warn" style={{ marginBottom: 10 }}><KeyRound size={16} /><span><b>{wallet.needingOldPin().length === 1 ? "An older wallet still has" : `${wallet.needingOldPin().length} older wallets still have`} its own PIN.</b> Enter it once and your password opens it from then on. <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "old-wallets" })}>Add to my password</button></span></div>}
       {offerPassword && <div className="alert" style={{ marginBottom: 10, background: "var(--surface-2)", border: "1px solid var(--line)" }} data-testid="offer-new-password"><KeyRound size={16} /><span>

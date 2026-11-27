@@ -1,3 +1,5 @@
+import { LiquidText } from "../metal";
+
 /**
  * The first screen, kept to four things: the MAXXING wordmark, one line, the two buttons, and the cap at the bottom edge.
  * The only motion is the cap rising in once (styles.css, "Brand screens"); none under prefers-reduced-motion.
@@ -18,7 +20,7 @@ export function Welcome({ onCreate, onImport }: { onCreate?: () => void; onImpor
 
 /** The wordmark: MAXXING, big and tight, with WALLET spaced out under it. */
 export function BrandMark({ as: Tag = "h1" }: { as?: "h1" | "div" }) {
-  return <Tag className="brand-mark" aria-label="MAXXING Wallet"><span>MAXXING</span><small aria-hidden="true">WALLET</small></Tag>;
+  return <Tag className="brand-mark" aria-label="MAXXING Wallet"><LiquidText>MAXXING</LiquidText><small aria-hidden="true">WALLET</small></Tag>;
 }
 
 /** The cap, large, cropped by the bottom edge of the screen. It rises in from below once, then stays still. */

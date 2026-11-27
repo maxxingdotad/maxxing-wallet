@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { ChevronLeft, Eye, EyeOff } from "lucide-react";
 import { PASSWORD_RULE, weakPassword } from "../lib/password";
+import { Metal } from "../ui/metal";
 
 /** Escape closes the sheet or dialog that is open (keyboard access). */
 export function useEscape(onClose: () => void) {
@@ -91,7 +92,7 @@ export function PageHead({ title, onBack, right }: { title: string; onBack?: () 
   </header>;
 }
 
-export function Busy({ text }: { text: string }) { return <div className="busy" role="status"><span className="spinner" aria-hidden="true" />{text}</div>; }
+export function Busy({ text }: { text: string }) { return <div className="busy" role="status"><span className="spinner liquid" aria-hidden="true"><Metal /></span>{text}</div>; }
 
 /**
  * True where the background can clear the clipboard later (Chrome and Edge: an alarm plus an offscreen document, which work after

@@ -472,7 +472,7 @@ test("token prices: a native coin is priced as the registry's wrapped token; a t
   globalThis.fetch = (async () => new Response("no", { status: 401 })) as typeof fetch;
   try {
     assert.deepEqual(await price("eip155:8453", null), { priceUsd: null, change24hPct: null }, "no answer is no price, never 0");
-    assert.deepEqual(await chart("eip155:8453", null, "7d"), []);
+    assert.deepEqual(await chart("eip155:8453", null, "1W"), []);
   } finally { globalThis.fetch = real; }
 });
 

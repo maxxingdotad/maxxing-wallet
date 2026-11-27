@@ -164,7 +164,20 @@ const DEMO = {
  */
 const DEMO_RPC = { eth_chainId: "0x2105", eth_getTransactionCount: "0x5", eth_estimateGas: "0xfde8", eth_getBlockByNumber: { baseFeePerGas: "0x989680" }, eth_maxPriorityFeePerGas: "0xf4240", eth_gasPrice: "0x1312d00", eth_blockNumber: "0x1" };
 const BASE_RPCS = ["https://mainnet.base.org/*", "https://base-rpc.publicnode.com/*", "https://public.1rpc.io/base*", "https://base.drpc.org/*"];
+/**
+ * Store screenshots only: the sample coins are valued at today's price (read once from MAXXING's Data API), so Home's amounts agree
+ * with the live price on a token's own screen. The value written in the sample is the fallback when the price can't be read.
+ */
+async function demoCoinPrices() {
+  const ids = { ETH: "eip155:1:0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2", SOL: "solana:mainnet:So11111111111111111111111111111111111111112" };
+  try {
+    const response = await fetch(`https://api.maxxing.ad/v1/public/prices?ids=${encodeURIComponent(Object.values(ids).join(","))}`, { headers: { "x-maxxing-app": "maxxing-extension" }, signal: AbortSignal.timeout(20_000) });
+    const { items } = await response.json();
+    return Object.fromEntries(Object.entries(ids).map(([symbol, id]) => [symbol, Number(items.find(i => String(i.id).toLowerCase() === id.toLowerCase())?.priceUsd) || null]));
+  } catch { return {}; }
+}
 async function demoBalances(sessionId) {
+  const coinPrice = await demoCoinPrices();
   await send("Fetch.enable", { patterns: [{ urlPattern: "https://api.maxxing.ad/v1/public/wallets/*/balances*" }, { urlPattern: "https://api.maxxing.ad/v1/config*" }, ...BASE_RPCS.map(urlPattern => ({ urlPattern, requestStage: "Request" }))] }, sessionId);
   listeners.push(message => {
     if (message.method !== "Fetch.requestPaused" || message.sessionId !== sessionId) return;
@@ -184,8 +197,11 @@ async function demoBalances(sessionId) {
     }
     const address = decodeURIComponent(message.params.request.url.split("/wallets/")[1].split("/")[0]);
     const rows = address.startsWith("0x") ? DEMO.evm : DEMO.solana;
-    const items = rows.map(([chainId, token, native, symbol, name, balanceRaw, decimals, valueUsd]) => ({ chainId, address: token, native, symbol, name, imageUrl: null, balanceRaw, decimals, valueUsd }));
-    void send("Fetch.fulfillRequest", { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }, { name: "access-control-allow-origin", value: "*" }], body: Buffer.from(JSON.stringify({ items })).toString("base64") }, sessionId);
+    const items = rows.map(([chainId, token, native, symbol, name, balanceRaw, decimals, written]) => {
+      const valueUsd = native && coinPrice[symbol] ? (Number(balanceRaw) / 10 ** decimals * coinPrice[symbol]).toFixed(2) : written;
+      return { chainId, address: token, native, symbol, name, imageUrl: null, balanceRaw, decimals, valueUsd };
+    });
+    void send("Fetch.fulfillRequest", { requestId: message.params.requestId, responseCode: 200, responseHeaders: [{ name: "content-type", value: "application/json" }, { name: "access-control-allow-origin", value: "*" }], body: Buffer.from(JSON.stringify({ items, complete: true })).toString("base64") }, sessionId); // complete: the sample is the whole picture (nothing is on chain)
   });
 }
 
@@ -264,8 +280,18 @@ try {
   await popup.waitFor(`document.querySelector('[data-testid="autolock-row"] .set-value')?.textContent === "1 h"`);
   await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
   await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
-  await popup.waitFor(`!document.body.innerText.includes("Reading balances")`, 60000).catch(() => {});
+  await popup.waitFor(`!document.body.innerText.includes("Reading your balances")`, 60000).catch(() => {});
+  if (STORE_DEMO) await sleep(1500); // the total counts up and the rows rise in: capture them at rest
   await popup.shot("08-home");
+  if (STORE_DEMO) {
+    // Store screenshot: Ether's own screen (its live price and chart), from Home.
+    await popup.evaluate(`[...document.querySelectorAll('[data-testid="asset-list"] .asset-row')].find(r => r.textContent.includes("Ether")).click()`);
+    await popup.waitFor(`!!document.querySelector('[data-testid="token-detail"]') && !document.querySelector('[data-testid="token-detail"] .sk')`, 30000);
+    await sleep(1200);
+    await popup.shot("08h-token-ether");
+    await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
+    await popup.waitFor(`!!document.querySelector('[data-testid="asset-list"]')`, 30000);
+  }
   // Home is never empty: each network's coin and stables show at 0, verified, with logos.
   const defaultsShown = await popup.evaluate(`(() => { const rows = [...document.querySelectorAll('[data-testid="asset-list"] .asset-row')]; return { rows: rows.length, usdc: rows.some(r => r.textContent.includes("USDC")), svg: rows.filter(r => r.querySelector("svg")).length }; })()`);
   check("Home shows default assets at 0 with logos", defaultsShown.rows >= 5 && defaultsShown.usdc && defaultsShown.svg >= 5, JSON.stringify(defaultsShown));
@@ -298,7 +324,7 @@ try {
   const priceProbe = /\$(0\.9\d|1\.0\d)/.test(livePrice) ? "" : await popup.evaluate(`fetch("https://api.maxxing.ad/v1/public/prices?ids=eip155:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913", { headers: { "x-maxxing-app": "maxxing-extension" }, credentials: "omit", referrerPolicy: "no-referrer" }).then(async r => r.status + " " + (await r.text()).slice(0, 160), e => "fetch failed: " + e.message)`);
   if (IN_CI) skip("the Data API gives the extension a live price (USDC on Base about $1)", "CI: depends on MAXXING's production API; checked in local runs");
   else check("the Data API gives the extension a live price (USDC on Base about $1)", /\$(0\.9\d|1\.0\d)/.test(livePrice), `${livePrice} ${priceProbe}${priceProbe ? ` origin sent: ${sentOrigin()}` : ""}`);
-  await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "7d").click()`);
+  await popup.evaluate(`[...document.querySelectorAll('[role="tab"]')].find(b => b.textContent === "1W").click()`);
   await popup.waitFor(`!document.querySelector('[data-testid="token-detail"] .sk')`, 30000);
   if (STORE_DEMO) {
     // Store screenshot: the Send review for the sample USDC (reads answered by the demo endpoints; nothing is signed or sent).
@@ -340,8 +366,16 @@ try {
     const gasLine = await popup.evaluate(`document.querySelector('[data-testid="swap-network-fee"]').innerText`);
     check("the swap form shows the network fee to expect, in the coin", /Network fee, about/.test(gasLine) && /\d.* ETH/.test(gasLine), gasLine.replace(/\s+/g, " "));
     await popup.clickWhenReady("Review swap");
-    await popup.waitFor(`document.body.innerText.includes("Review swap") && !!document.querySelector('[data-testid="maxxing-fee"]')`, 45000);
+    await popup.waitFor(`!!document.querySelector('[data-testid="swap-review"] [data-testid="swap-fees"]')`, 45000);
+    await sleep(900);
     await popup.shot("08m-swap-review-fee");
+    // The review shows three lines; the fees line opens every fee, MAXXING's on its own line among them.
+    const closed = await popup.evaluate(`(() => { const r = document.querySelector('[data-testid="swap-review"]'); return { total: document.querySelector('[data-testid="swap-fees"]').innerText.replace(/\\s+/g, " "), least: r.innerText.includes("You get at least"), own: !!r.querySelector('[data-testid="maxxing-fee"]') }; })()`);
+    await popup.evaluate(`document.querySelector('[data-testid="swap-fees"]').click()`);
+    await popup.waitFor(`!!document.querySelector('[data-testid="swap-review"] [data-testid="maxxing-fee"]')`, 10000);
+    const opened = await popup.evaluate(`(() => { const r = document.querySelector('[data-testid="swap-review"]'); const p = document.querySelector('.confirm-panel').getBoundingClientRect(), s = document.querySelector('[data-testid="swap-steps"]'); return { fee: r.querySelector('[data-testid="maxxing-fee"]').innerText.replace(/\\s+/g, " "), relay: r.innerText.includes("Relay's fees"), steps: !!s && s.innerText.length > 10, panelFits: p.top >= 54 && p.bottom <= innerHeight + 1 }; })()`);
+    check("the swap review shows the least you get and the fees added up; a tap opens each fee and the steps", closed.least && /\$/.test(closed.total) && !closed.own && /MAXXING fee 0\.85%/.test(opened.fee) && opened.relay && opened.steps && opened.panelFits, JSON.stringify({ closed, opened }));
+    await popup.shot("08m2-swap-review-details");
     await popup.evaluate(`document.querySelector('[aria-label="Back"]').click()`);
     await popup.waitFor(`!!document.querySelector('.dock [aria-label="Home"]')`);
     await popup.evaluate(`document.querySelector('.dock [aria-label="Home"]').click()`);
