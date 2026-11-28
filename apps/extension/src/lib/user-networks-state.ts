@@ -14,8 +14,10 @@ export type UserNetworks = {
   /** The RPC tried first on a network, when the user picked one. */
   preferred: Record<string, string>;
   custom: CustomNetwork[];
+  /** Networks the user turned off (networkIds): not listed, not read. Their sites and past activity still resolve. */
+  off: string[];
 };
-export const EMPTY: UserNetworks = { rpcs: {}, preferred: {}, custom: [] };
+export const EMPTY: UserNetworks = { rpcs: {}, preferred: {}, custom: [], off: [] };
 
 let state: UserNetworks = EMPTY;
 export const userNetworksNow = () => state;

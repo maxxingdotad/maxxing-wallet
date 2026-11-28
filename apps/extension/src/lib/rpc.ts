@@ -1,6 +1,6 @@
 /**
  * JSON-RPC over a chain's public endpoints (from the chain registry). An endpoint that is down, slow or rate-limited is skipped
- * for the next one; when every endpoint fails, the whole list is tried again after a short wait (twice, waiting longer each time).
+ * for the next one (a slow one is overtaken after a couple of seconds, not waited out); when every endpoint fails, the whole list is tried again after a short wait (twice, waiting longer each time).
  * The endpoint that answered last is tried first next time. An error from the chain itself (a reverted call, a bad transaction)
  * is final: another endpoint would give the same answer, and a transaction must not be sent twice.
  */
@@ -17,6 +17,8 @@ export function chainError(code: number | undefined, message: string) {
 
 /** Waits between rounds over the endpoints: none before the first, then these. Tests set them to zero. */
 export const RETRY_WAITS_MS = [400, 1500];
+/** How long a read waits on one endpoint before also asking the next (the first keeps running; the first answer wins). */
+export const HEDGE_MS = 1500;
 const preferred = new Map<string, string>();
 /**
  * A check an endpoint must pass before it is used (user-networks.ts: a user's own RPC must still serve its network's chain id the
@@ -31,30 +33,61 @@ export async function rpc<T>(urls: readonly string[], method: string, params: un
   const key = urls.join(" ");
   const first = preferred.get(key);
   const order = first && urls.includes(first) ? [first, ...urls.filter(u => u !== first)] : [...urls];
+  const sending = method === "eth_sendRawTransaction" || method === "sendTransaction";
   let last: unknown = new RpcError("The network didn't answer.");
+  /** One endpoint's answer: the result, or its error (`final` when it is the chain's own, which no other endpoint would change). */
+  const ask = async (url: string, controller: AbortController): Promise<{ value: T } | { error: unknown; final?: boolean }> => {
+    if (guard && !(await guard(url).catch(() => true))) return { error: new RpcError("An endpoint no longer serves this network.") };
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+      const body = await response.json().catch(() => null) as { result?: T; error?: { code: number; message: string } } | null;
+      if (body?.error) {
+        const error = new RpcError(String(body.error.message ?? "RPC error"), body.error.code);
+        return { error, final: chainError(body.error.code, error.message) }; // not final: the endpoint's own limit or gap
+      }
+      if (!response.ok || !body || !("result" in body)) return { error: new RpcError(`HTTP ${response.status}`) };
+      return { value: body.result as T };
+    } catch (error) { return { error }; } finally { clearTimeout(timer); }
+  };
+  /**
+   * One pass over the endpoints, in order. The next is asked when the one before fails, and, for a read, also when it hasn't
+   * answered within HEDGE_MS (it keeps running; whichever answers first wins and the rest are dropped). So one slow endpoint
+   * costs a couple of seconds, not its whole timeout. A send is never hedged: one endpoint at a time.
+   */
+  const pass = () => new Promise<{ value: T } | { error: unknown; final?: boolean }>(resolve => {
+    const controllers: AbortController[] = [];
+    let next = 0, running = 0, settled = false, hedge: ReturnType<typeof setTimeout> | undefined;
+    const finish = (answer: { value: T } | { error: unknown; final?: boolean }) => {
+      if (settled) return;
+      settled = true; clearTimeout(hedge);
+      for (const c of controllers) c.abort();
+      resolve(answer);
+    };
+    const launch = () => {
+      if (settled || next >= order.length) return;
+      const url = order[next++]!, controller = new AbortController();
+      controllers.push(controller); running++;
+      clearTimeout(hedge);
+      if (!sending && next < order.length) hedge = setTimeout(launch, HEDGE_MS);
+      void ask(url, controller).then(answer => {
+        running--;
+        if (settled) return;
+        if ("value" in answer) { preferred.set(key, url); finish(answer); }
+        else if (answer.final) finish(answer);
+        else { last = answer.error; if (next < order.length) launch(); else if (!running) finish({ error: last }); }
+      });
+    };
+    launch();
+  });
   for (let round = 0; round <= RETRY_WAITS_MS.length; round++) {
     if (round > 0) await new Promise(r => setTimeout(r, RETRY_WAITS_MS[round - 1]));
-    for (const url of order) {
-      if (guard && !(await guard(url).catch(() => true))) { last = new RpcError("An endpoint no longer serves this network."); continue; }
-      const controller = new AbortController(), timer = setTimeout(() => controller.abort(), timeoutMs);
-      try {
-        const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, credentials: "omit", referrerPolicy: "no-referrer", signal: controller.signal, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-        const body = await response.json().catch(() => null) as { result?: T; error?: { code: number; message: string } } | null;
-        if (body?.error) {
-          const error = new RpcError(String(body.error.message ?? "RPC error"), body.error.code);
-          if (chainError(body.error.code, error.message)) throw Object.assign(error, { final: true });
-          last = error; continue; // the endpoint's own limit or gap: the next one may answer
-        }
-        if (!response.ok || !body || !("result" in body)) { last = new RpcError(`HTTP ${response.status}`); continue; }
-        preferred.set(key, url);
-        return body.result as T;
-      } catch (error) {
-        if ((error as { final?: boolean }).final) throw error;
-        last = error;
-      } finally { clearTimeout(timer); }
-    }
+    const answer = await pass();
+    if ("value" in answer) return answer.value;
+    if (answer.final) throw Object.assign(answer.error instanceof Error ? answer.error : new RpcError(String(answer.error)), { final: true });
+    last = answer.error;
     // A sent transaction isn't retried in later rounds: an endpoint may have taken it and failed to answer.
-    if (method === "eth_sendRawTransaction" || method === "sendTransaction") break;
+    if (sending) break;
   }
   throw last instanceof Error ? last : new RpcError("The network didn't answer.");
 }

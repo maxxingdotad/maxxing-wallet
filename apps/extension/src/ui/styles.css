@@ -816,7 +816,8 @@ button.site-network svg:last-child { color: var(--muted); }
 
 /* The total: liquid metal seen through the digits. The canvas flows behind; the number is white on black and multiplies with
    it, so black stays black and the digits become chrome. The metal is lifted (brighter, flatter) so every digit stays readable. */
-.balance-metal { position: relative; isolation: isolate; display: inline-block; margin: 6px 0 8px; background: #000; }
+/* A block of its own, as wide as the number: the note under the total stays under it, never beside it. */
+.balance-metal { position: relative; isolation: isolate; display: table; margin: 6px auto 8px; background: #000; }
 .balance-metal .metal canvas { filter: contrast(.42) brightness(1.9); }
 .balance-metal .balance { position: relative; margin: 0; padding: 0 8px; background: #000; color: #fff; mix-blend-mode: multiply; }
 .balance-metal .balance .cents { color: rgb(255 255 255 / .55); }

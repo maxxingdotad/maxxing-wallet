@@ -10,6 +10,7 @@ import { signSolanaTransaction } from "@maxxing/wallet-core/solana-tx";
 import { networkById, type Network } from "./chains";
 import { rpc, sendSigned } from "./rpc";
 import { activity, kept } from "./store";
+import { forgetFreshness } from "./balances";
 
 export function parseUnits(text: string, decimals: number): bigint {
   const clean = text.trim().replace(/,/g, "");
@@ -185,6 +186,7 @@ export async function sendEvm(draft: EvmDraft): Promise<Sent> {
   if (draft.kind === "send") await remember(draft.to, "EVM");
   await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} on ${draft.network.name}: ${draft.summary.tokenCall?.text ?? draft.summary.amount} · ${hash}`,
     account: draft.from, networkId: draft.network.networkId, hash, status: "pending", ...(typeof draft.transaction.nonce === "number" ? { nonce: draft.transaction.nonce } : {}) });
+  forgetFreshness(); // balances change: the next screen reads them again
   return { id: hash, certain };
 }
 
@@ -275,6 +277,7 @@ export async function sendSol(draft: SolDraft, from: string): Promise<Sent> {
   await remember(draft.to, "SOLANA");
   await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} ${Number(draft.lamports) / 1e9} SOL on ${draft.network.name} · ${signature}`,
     account: from, networkId: draft.network.networkId, hash: signature, status: "pending" });
+  forgetFreshness();
   return { id: signature, certain };
 }
 

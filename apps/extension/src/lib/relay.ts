@@ -10,6 +10,7 @@ import { keccak256, type TypedDataDefinition } from "viem";
 import { evmNetwork, type Network } from "./chains";
 import { rpc, RpcError, sendSigned } from "./rpc";
 import { activity } from "./store";
+import { forgetFreshness } from "./balances";
 import { approvalInTransaction, approvals } from "./approvals";
 import { MAX_FEE_BPS, checkAppFee, swapFee, type SwapFee } from "./swap-fee";
 import PINNED from "./relay-pinned.json";
@@ -389,6 +390,7 @@ export async function execute(prepared: Prepared, onProgress: (text: string) => 
   }
   await activity.add({ kind: "send", text: prepared.gasless ? "Gasless swap sent through Relay (fee paid from the swap)" : `Swap/bridge sent through Relay (${hashes.length} transaction${hashes.length === 1 ? "" : "s"})`,
     account: prepared.from, networkId: `eip155:${prepared.chainId}`, ...(hashes.length ? { hash: hashes.at(-1)!, status: "confirmed" as const } : {}) });
+  forgetFreshness(); // balances change: the next screen reads them again
   return hashes;
 }
 

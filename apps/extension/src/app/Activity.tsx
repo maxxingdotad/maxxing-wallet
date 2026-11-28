@@ -66,10 +66,9 @@ export function ActivityView({ account, onTab }: { account: { evm: string; solan
     const all = await activityLog.all();
     if (!live.current) return;
     setItems(all);
-    const known = networks(true);
     const open = all.filter(a => statusOf(a) === "pending" && a.hash && a.networkId && Date.now() - a.at < 7 * 86_400_000).slice(0, 10);
     const settled = await Promise.all(open.map(async a => {
-      const n = known.find(x => x.networkId === a.networkId);
+      const n = networkById(a.networkId!); // also a network turned off since: its transaction still settles
       const state = n ? await sendStatus(n, a.hash!).catch(() => "error" as const) : "error";
       if (state === "confirmed" || state === "failed") { await settleSendActivity(a.hash!, state); return true; }
       // No node knows it and its nonce is used: something else took its place.
@@ -84,7 +83,7 @@ export function ActivityView({ account, onTab }: { account: { evm: string; solan
   useEffect(() => { if (!waiting) return; const t = setInterval(() => void refresh(), RECHECK_MS); return () => clearInterval(t); }, [waiting, refresh]);
 
   const startReplace = async (entry: Activity, kind: ReplaceKind) => {
-    const network = networks(true).find(n => n.networkId === entry.networkId);
+    const network = entry.networkId ? networkById(entry.networkId) : null;
     if (!network) return;
     setReplacing({ entry, kind, draft: null, feeUsd: null, error: "" });
     try {

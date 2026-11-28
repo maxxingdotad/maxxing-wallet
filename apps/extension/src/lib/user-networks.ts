@@ -177,5 +177,15 @@ export async function addCustomNetwork(input: { name: string; rpcUrl: string; ch
 export const removeCustomNetwork = (networkId: string) => change(s => {
   const rpcs = { ...s.rpcs }, preferred = { ...s.preferred };
   delete rpcs[networkId]; delete preferred[networkId];
-  return { ...s, rpcs, preferred, custom: s.custom.filter(c => c.networkId !== networkId) };
+  return { ...s, rpcs, preferred, custom: s.custom.filter(c => c.networkId !== networkId), off: (s.off ?? []).filter(id => id !== networkId) };
 });
+
+/**
+ * Turns a network off or back on. Off: it isn't listed anywhere and its balances aren't read (fewer calls to public endpoints);
+ * nothing held there is touched, and turning it on shows it again. `stillOn` is how many listed networks would remain: the last
+ * one can't be turned off.
+ */
+export async function setNetworkOff(networkId: string, off: boolean, stillOn: number) {
+  if (off && stillOn < 1) throw new Error("Keep at least one network on.");
+  await change(s => ({ ...s, off: off ? [...new Set([...(s.off ?? []), networkId])] : (s.off ?? []).filter(id => id !== networkId) }));
+}

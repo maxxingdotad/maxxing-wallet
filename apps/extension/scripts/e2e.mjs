@@ -284,7 +284,12 @@ try {
   await popup.waitFor(`document.querySelector('[data-testid="autolock-row"] .set-value')?.textContent === "1 h"`);
   await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);
   await popup.waitFor(`document.body.innerText.includes("Tokens")`, 30000);
-  await popup.waitFor(`!document.body.innerText.includes("Reading your balances")`, 60000).catch(() => {});
+  // A fresh wallet holds nothing: Home must say so soon (every network answered, or was overtaken), not sit on "Reading…".
+  const readingSince = Date.now();
+  const settled = await popup.waitFor(`!document.body.innerText.includes("Reading your balances")`, 60000).then(() => true, () => false);
+  const readingMs = Date.now() - readingSince;
+  if (STORE_DEMO || IN_CI) console.log(`NOTE  Home's balances settled in ${readingMs} ms`);
+  else check("Home stops reading an empty wallet's balances within 12 s, on the live networks", settled && readingMs < 12_000, `${readingMs} ms`);
   if (STORE_DEMO) await sleep(1500); // the total counts up and the rows rise in: capture them at rest
   await popup.shot("08-home");
   if (STORE_DEMO) {

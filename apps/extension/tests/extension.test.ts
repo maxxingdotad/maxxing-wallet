@@ -877,6 +877,108 @@ test("balances: when the API lists only MAXXING's tokens, coins come from the ch
   } finally { globalThis.fetch = real; }
 });
 
+test("a slow endpoint is overtaken, not waited out: a read asks the next one after a moment and takes the first answer; a send never doubles up", async () => {
+  const { rpc, HEDGE_MS } = await import("../src/lib/rpc");
+  assert.ok(HEDGE_MS <= 3000, "a couple of seconds, not an endpoint's whole timeout");
+  const urls = ["https://slow.example", "https://quick.example"], calls: string[] = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = ((input: string | URL, init?: RequestInit) => {
+    const url = String(input); calls.push(url);
+    if (url.includes("quick")) return Promise.resolve(new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x2a" })));
+    // The slow one never answers until it is dropped.
+    return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))));
+  }) as typeof fetch;
+  try {
+    const started = Date.now();
+    assert.equal(await rpc<string>(urls, "eth_getBalance", ["0x0", "latest"]), "0x2a");
+    const took = Date.now() - started;
+    assert.ok(took >= HEDGE_MS - 100 && took < HEDGE_MS + 1500, `answered about ${HEDGE_MS} ms in, by the second endpoint (${took} ms)`);
+    assert.deepEqual(calls, urls);
+    // The endpoint that answered goes first next time: no wait at all.
+    calls.length = 0;
+    const again = Date.now();
+    await rpc<string>(urls, "eth_getBalance", ["0x0", "latest"]);
+    assert.ok(Date.now() - again < 500);
+    assert.deepEqual(calls, ["https://quick.example"]);
+    // A send goes to one endpoint at a time: the second is asked only after the first has failed (here, its short timeout).
+    calls.length = 0;
+    const sendUrls = ["https://slow.example/send", "https://quick.example/send"];
+    await rpc<string>(sendUrls, "eth_sendRawTransaction", ["0x00"], 300);
+    assert.deepEqual(calls, sendUrls);
+  } finally { globalThis.fetch = real; }
+});
+
+test("balances are kept: screens get the last reading at once, a fresh one isn't read again, a send or the refresh button reads again", async () => {
+  const { portfolio, lastPortfolio, forgetFreshness } = await import("../src/lib/balances");
+  const who = { evm: "0x7777777777777777777777777777777777777777", solana: "So11111111111111111111111111111111111111112" };
+  let reads = 0, balance = "0xde0b6b3a7640000";
+  const real = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/balances")) return new Response(JSON.stringify({ items: [], complete: false }));
+    if (url.includes("/v1/public/prices")) return new Response(JSON.stringify({ items: [] }));
+    const { method } = JSON.parse(String(init?.body ?? "{}"));
+    if (method === "eth_getBalance") reads++;
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: method === "eth_getBalance" ? balance : "0x" }));
+  }) as typeof fetch;
+  try {
+    assert.equal(await lastPortfolio(who, false, "eip155:8453"), null, "nothing kept yet");
+    // Two screens asking at once share one read.
+    const [a, b] = await Promise.all([portfolio(who, false, "eip155:8453"), portfolio(who, false, "eip155:8453")]);
+    assert.equal(reads, 1);
+    assert.equal(a, b);
+    assert.equal(a.holdings.find(h => !h.address)!.amount, "1");
+    // Fresh: not read again, and the kept reading is there for the next screen.
+    await portfolio(who, false, "eip155:8453");
+    assert.equal(reads, 1);
+    assert.equal((await lastPortfolio(who, false, "eip155:8453"))!.portfolio.holdings.length, a.holdings.length);
+    // Another network choice is another reading.
+    await portfolio(who, false, "eip155:1");
+    assert.equal(reads, 2);
+    // The refresh button reads again; so does the next screen after a send.
+    balance = "0x1bc16d674ec80000";
+    assert.equal((await portfolio(who, false, "eip155:8453", true)).holdings.find(h => !h.address)!.amount, "2");
+    assert.equal(reads, 3);
+    forgetFreshness();
+    await portfolio(who, false, "eip155:8453");
+    assert.equal(reads, 4);
+    assert.equal((await lastPortfolio(who, false, "eip155:8453"))!.portfolio.holdings.find(h => !h.address)!.amount, "2", "the old reading still shows meanwhile");
+  } finally { globalThis.fetch = real; }
+});
+
+test("a network turned off isn't listed or read; it still resolves for past activity; the last one stays on", async () => {
+  const { networks, listedNetworks, networkById, networkOff } = await import("../src/lib/chains");
+  const { setNetworkOff } = await import("../src/lib/user-networks");
+  const { EMPTY, setUserNetworksNow } = await import("../src/lib/user-networks-state");
+  const { loadPortfolio } = await import("../src/lib/balances");
+  const real = globalThis.fetch;
+  const asked = new Set<string>();
+  globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes("/balances")) return new Response(JSON.stringify({ items: [], complete: false }));
+    if (url.includes("/v1/public/prices")) return new Response(JSON.stringify({ items: [] }));
+    asked.add(new URL(url).host);
+    const { method } = JSON.parse(String(init?.body ?? "{}"));
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: method === "getBalance" ? { value: 0 } : method === "getTokenAccountsByOwner" ? { value: [] } : "0x0" }));
+  }) as typeof fetch;
+  try {
+    const before = networks(false).length, base = networkById("eip155:8453")!;
+    await setNetworkOff("eip155:8453", true, before - 1);
+    assert.equal(networkOff("eip155:8453"), true);
+    assert.equal(networks(false).length, before - 1);
+    assert.ok(!networks(false).some(n => n.networkId === "eip155:8453"));
+    assert.equal(listedNetworks(false).length, before, "Settings still lists it, to turn it back on");
+    assert.equal(networkById("eip155:8453")?.name, "Base", "a past transaction there still has its network");
+    // Its endpoints aren't asked when balances are read.
+    await loadPortfolio({ evm: "0x1111111111111111111111111111111111111111", solana: "So11111111111111111111111111111111111111112" }, false, "all");
+    assert.ok(asked.size > 5, "the other networks were read");
+    assert.ok(!asked.has(new URL(base.rpc[0]!).host), "Base's own endpoint wasn't asked");
+    await assert.rejects(setNetworkOff("eip155:1", true, 0), /at least one network/);
+    await setNetworkOff("eip155:8453", false, before);
+    assert.equal(networks(false).length, before);
+  } finally { globalThis.fetch = real; setUserNetworksNow(EMPTY); await store.kept.set("user-networks", EMPTY); }
+});
+
 test("rival transactions (same account, network and nonce): the one in a block settles the others", async () => {
   const { settleSendActivity } = await import("../src/lib/send");
   const me = "0xCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCcCc", net = "eip155:8453";

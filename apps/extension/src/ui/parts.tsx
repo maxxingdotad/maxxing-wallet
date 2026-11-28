@@ -88,7 +88,7 @@ export function Orbit({ total, change, shares, note, hidden }: { total: number; 
       </g>
     </svg>
     <div className="orbit-center">
-      <small>One balance · {shares.length} chains</small>
+      <small>{shares.length ? `One balance · ${shares.length} chain${shares.length === 1 ? "" : "s"}` : "One balance · every chain"}</small>
       {/* The total is cut out of liquid metal: the chrome flows behind, and only the digits let it through. */}
       <div className="balance-metal"><Metal fill />
         <div className="balance num" data-testid="total">{hidden ? "$••••" : <><Rolling text={whole!} /><span className="cents"><Rolling text={`.${cents}`} /></span></>}</div>

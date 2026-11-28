@@ -6,7 +6,7 @@ import { knownTokens, KNOWN_SOLANA_MINTS } from "@maxxing/wallet-core/chains";
 import { Dock, plainDecimal, short, usd, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
 import { AssetMark, AssetSheet } from "../ui/asset-picker";
-import { loadPortfolio } from "../lib/balances";
+import { portfolio as loadPortfolio } from "../lib/balances";
 import { explorerTx, networkLabel, networks, type Network } from "../lib/chains";
 import { parseUnits } from "../lib/send";
 import { formatUnits } from "viem";

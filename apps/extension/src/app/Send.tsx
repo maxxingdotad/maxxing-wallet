@@ -6,7 +6,7 @@ import { TokenMark, plainDecimal, short, usd, type Holding } from "../ui/parts";
 import { Busy, PageHead, message } from "./kit";
 import { HoldButton, ReceiptCard } from "../ui/moving";
 import { AddressAvatar, BigAmount } from "../ui/confirm";
-import { loadPortfolio } from "../lib/balances";
+import { portfolio as loadPortfolio } from "../lib/balances";
 import { explorerTx, networkById, networkLabel, networks } from "../lib/chains";
 import { book, checkRecipient, draftEvmMaxSend, draftEvmSend, draftSolSend, estimateSendFee, maxFeeOf, maxSendable, same, sendEvm, sendSol, sendStatus, settleSendActivity, validRecipient, type EvmDraft, type RecipientCheck, type Saved, type SolDraft } from "../lib/send";
 import { isEnsName, resolveEns } from "../lib/ens";

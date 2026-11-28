@@ -28,10 +28,16 @@ const COLORS: Record<string, string> = {
 const ORDERED = SDK_CHAINS.map((chain, i) => ({ chain, i })).sort((a, b) => (a.chain.popularRank ?? Infinity) - (b.chain.popularRank ?? Infinity) || a.i - b.i).map(x => x.chain);
 
 export function networks(showTestnets: boolean): Network[] {
+  const off = userNetworksNow().off ?? [];
+  return listedNetworks(showTestnets).filter(chain => !off.includes(chain.networkId));
+}
+/** Every network that can be listed, the ones the user turned off included (Settings → Networks shows those too). */
+export function listedNetworks(showTestnets: boolean): Network[] {
   const registry = ORDERED.filter(chain => showTestnets || !chain.testnet).map(fromRegistry);
   const custom = userNetworksNow().custom.filter(c => !SDK_CHAINS.some(chain => chain.evmChainId === c.evmChainId)).map(fromUser);
   return [...registry, ...custom].filter(chain => chain.rpc.length);
 }
+export const networkOff = (networkId: string) => (userNetworksNow().off ?? []).includes(networkId);
 /** Every network, test networks and user-added ones included, with its endpoints in order. */
 const everyNetwork = () => [...SDK_CHAINS.map(fromRegistry), ...userNetworksNow().custom.filter(c => !SDK_CHAINS.some(chain => chain.evmChainId === c.evmChainId)).map(fromUser)];
 

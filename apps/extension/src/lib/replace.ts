@@ -13,6 +13,7 @@ import { checkedTransaction, transactionSummary, type TransactionSummary } from 
 import type { Network } from "./chains";
 import { rpc, sendSigned } from "./rpc";
 import { activity, type Activity } from "./store";
+import { forgetFreshness } from "./balances";
 import { CUSTOM_MAX_FEE, CUSTOM_MAX_TIP, SENT_PREFIX, maxFeeOf, sendStatus, type Sent } from "./send";
 
 export type ReplaceKind = "speed-up" | "cancel";
@@ -90,6 +91,7 @@ export async function sendReplacement(r: Replacement): Promise<Sent> {
   await activity.change(all => all.map(a => { if (a.hash !== r.original) return a; what = describe(a); return { ...a, nonce: r.nonce }; }));
   await activity.add({ kind: "send", text: `${certain ? "Sent" : "Not confirmed yet (check the explorer before sending again)"} on ${r.network.name}: ${r.kind === "cancel" ? "Cancel" : "Speed-up"} · ${what} · ${hash}`,
     account: r.from, networkId: r.network.networkId, hash, status: "pending", nonce: r.nonce, replaceKind: r.kind });
+  forgetFreshness();
   return { id: hash, certain };
 }
 

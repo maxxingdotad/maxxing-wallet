@@ -8,6 +8,7 @@ import { chainMark, networks, type Network } from "./chains";
 import { rpc } from "./rpc";
 import { nativeAsset } from "./assets";
 import { prices, type Price } from "./market";
+import { kept } from "./store";
 import type { Holding } from "../ui/parts";
 
 export const API_URL = "https://api.maxxing.ad";
@@ -15,6 +16,8 @@ const APP_ID = "maxxing-extension";
 /** How many holdings get a price looked up in one load. */
 const MAX_PRICED = 40;
 const PRICE_WAIT_MS = 6000;
+/** The longest one network's balances, or the Data API's answer, may take before the screen goes on without it. */
+export const NETWORK_WAIT_MS = 6000;
 const ETHEREUM = "eip155:1";
 const STABLE =/^(USDC|USDT|USDG|DAI|USDC\.E|USDBC|PYUSD)$/i;
 
@@ -68,7 +71,7 @@ async function solanaBalances(network: Network, owner: string): Promise<Raw[]> {
  */
 async function apiBalances(address: string, wanted: Network[]): Promise<{ items: Raw[]; complete: boolean } | null> {
   try {
-    const response = await fetch(`${API_URL}/v1/public/wallets/${encodeURIComponent(address)}/balances`, { headers: { "x-maxxing-app": APP_ID }, credentials: "omit", referrerPolicy: "no-referrer" });
+    const response = await fetch(`${API_URL}/v1/public/wallets/${encodeURIComponent(address)}/balances`, { headers: { "x-maxxing-app": APP_ID }, credentials: "omit", referrerPolicy: "no-referrer", signal: AbortSignal.timeout(NETWORK_WAIT_MS) });
     if (!response.ok) return null;
     const body = await response.json() as { complete?: boolean; items: { chainId: string; address: string; native: boolean; symbol: string; name: string; imageUrl: string | null; balanceRaw: string; decimals: number | null; valueUsd: string | null }[] };
     return { complete: body.complete === true, items: body.items.flatMap(item => {
@@ -85,6 +88,45 @@ export const shownNetworks = (showTestnets: boolean, selected = "all") => {
   return selected === "all" ? all : all.filter(n => n.networkId === selected);
 };
 
+// ── The last reading, kept ───────────────────────────────────────────────────────────────────────────────────────────────
+// Screens show the last reading at once and read again behind it, instead of starting from nothing each time one opens.
+/** A reading younger than this is used as it is; older, it still shows while a new one is read. */
+export const FRESH_MS = 20_000;
+type Kept = { at: number; portfolio: Portfolio };
+const KEPT_KEY = "portfolio-last", KEPT_MAX = 12;
+const recent = new Map<string, Kept>(), reading = new Map<string, Promise<Portfolio>>();
+const keyOf = (account: { evm: string; solana: string }, showTestnets: boolean, selected: string) => `${account.evm.toLowerCase()}|${account.solana}|${selected}|${showTestnets ? 1 : 0}`;
+
+/** The last reading for this account and network choice (from this session, else from the device), or null. */
+export async function lastPortfolio(account: { evm: string; solana: string }, showTestnets: boolean, selected = "all"): Promise<Kept | null> {
+  const key = keyOf(account, showTestnets, selected);
+  if (!recent.has(key)) { const saved = (await kept.get<Record<string, Kept>>(KEPT_KEY, {}).catch(() => ({} as Record<string, Kept>)))[key]; if (saved) recent.set(key, saved); }
+  return recent.get(key) ?? null;
+}
+/** After something that changes balances (a send, a swap): the next read asks the networks again. */
+export function forgetFreshness() { for (const [key, k] of recent) recent.set(key, { ...k, at: 0 }); }
+
+/**
+ * The account's holdings for the screens: a reading under FRESH_MS old is returned as it is; two screens asking at once share
+ * one read; `force` (the refresh button) always reads. Every new reading is kept for next time.
+ */
+export async function portfolio(account: { evm: string; solana: string }, showTestnets: boolean, selected = "all", force = false): Promise<Portfolio> {
+  const key = keyOf(account, showTestnets, selected);
+  const last = await lastPortfolio(account, showTestnets, selected);
+  if (!force && last && Date.now() - last.at < FRESH_MS) return last.portfolio;
+  const running = reading.get(key);
+  if (running) return running;
+  const read = loadPortfolio(account, showTestnets, selected).then(async p => {
+    // A reading where networks failed doesn't replace a good one's rows: the screen says "may be out of date" either way.
+    const entry = { at: Date.now(), portfolio: p };
+    recent.set(key, entry);
+    await kept.update<Record<string, Kept>>(KEPT_KEY, {}, all => Object.fromEntries(Object.entries({ ...all, [key]: entry }).sort((a, b) => b[1].at - a[1].at).slice(0, KEPT_MAX))).catch(() => {});
+    return p;
+  }).finally(() => reading.delete(key));
+  reading.set(key, read);
+  return read;
+}
+
 export async function loadPortfolio(account: { evm: string; solana: string }, showTestnets: boolean, selected = "all"): Promise<Portfolio> {
   const all = shownNetworks(showTestnets, selected);
   const errors: string[] = [];
@@ -98,7 +140,10 @@ export async function loadPortfolio(account: { evm: string; solana: string }, sh
   // tokens), and always test networks and networks the user added, which the API doesn't cover.
   const whole = (n: Network) => !n.testnet && !n.custom && (n.family === "SOLANA" ? fromApiSol : fromApiEvm)?.complete === true;
   const onChain = all.filter(n => !whole(n));
-  const reads = await Promise.allSettled(onChain.map(network => network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm)));
+  // No network holds the rest up: one that hasn't answered in NETWORK_WAIT_MS counts as not read this time (the screen says
+  // some balances may be out of date, with Retry), and what the others said shows now.
+  const soon = <T,>(read: Promise<T>) => Promise.race([read, new Promise<never>((_, fail) => setTimeout(() => fail(new Error("NETWORK_SLOW")), NETWORK_WAIT_MS))]);
+  const reads = await Promise.allSettled(onChain.map(network => soon(network.family === "SOLANA" ? solanaBalances(network, account.solana) : evmBalances(network, account.evm))));
   const chain: Raw[] = [];
   reads.forEach((read, i) => { if (read.status === "fulfilled") chain.push(...read.value); else errors.push(onChain[i]!.name); });
   // The chain's balance is the fresh one; the API's row adds what the chain can't say (the name, the dollar value) and the

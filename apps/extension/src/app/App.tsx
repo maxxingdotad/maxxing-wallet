@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, DollarSign, FlaskConical, KeySquare, Pencil, ScrollText, Settings as SettingsIcon, Timer, UserPlus } from "lucide-react";
 import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, ChevronDown, ChevronRight, Copy, Code2, ExternalLink, Eye, EyeOff, Globe, KeyRound, LifeBuoy, Lock, LogOut, Maximize2, PanelRight, Plus, RefreshCw, ShieldCheck, Trash2, Download } from "lucide-react";
 import { ActionDisc, Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
@@ -10,7 +10,7 @@ import { ExportFlow } from "./Export";
 import { SendView } from "./Send";
 import { SwapView } from "./Swap";
 import * as wallet from "../lib/wallet";
-import { loadPortfolio, shownNetworks, type Portfolio } from "../lib/balances";
+import { lastPortfolio, portfolio as readPortfolio, shownNetworks, type Portfolio } from "../lib/balances";
 import { AssetList, ManageAssets, NetworkButton, NetworkSheet } from "./Assets";
 import { ReceiveView } from "./Receive";
 import { TokenDetail } from "./TokenDetail";
@@ -99,7 +99,7 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
 /** Manage assets for the networks shown now, with what's held there. */
 function ManageAssetsLoader({ account, onBack }: { account: WalletSummary; onBack: () => void }) {
   const [data, setData] = useState<{ shown: ReturnType<typeof shownNetworks>; holdings: Holding[] } | null>(null);
-  useEffect(() => { void settingsStore.read().then(async s => setData({ shown: shownNetworks(s.showTestnets, s.network), holdings: (await loadPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets, s.network)).holdings })); }, [account.evm]);
+  useEffect(() => { void settingsStore.read().then(async s => setData({ shown: shownNetworks(s.showTestnets, s.network), holdings: (await readPortfolio({ evm: account.evm, solana: account.solana }, s.showTestnets, s.network)).holdings })); }, [account.evm]);
   if (!data) return <div className="popup"><div className="backdrop" /><PageHead title="Manage assets" onBack={onBack} /><SkeletonRows count={5} /></div>;
   return <ManageAssets shown={data.shown} holdings={data.holdings} onBack={onBack} />;
 }
@@ -177,13 +177,26 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
   const [picking, setPicking] = useState(false);
   const [offerPassword, setOfferPassword] = useState(false);
   useEffect(() => { void wallet.newPasswordOffered().then(setOfferPassword); }, []);
-  const load = useCallback(async () => {
+  /**
+   * The last reading shows at once (even an old one), and the networks are read again behind it unless it is fresh. `force`
+   * (the refresh button) always reads. The request counter drops an answer that belongs to an account or network left since.
+   */
+  const asked = useRef(0);
+  const load = useCallback(async (force = false) => {
+    const mine = ++asked.current;
     setLoading(true);
-    const s = await settingsStore.read(); setPrefs(s);
-    setAssetChoices(await assetPrefsStore.read());
-    try { setPortfolio(await loadPortfolio({ evm: active.evm, solana: active.solana }, s.showTestnets, s.network)); } finally { setLoading(false); }
+    try {
+      const s = await settingsStore.read(); setPrefs(s);
+      setAssetChoices(await assetPrefsStore.read());
+      const who = { evm: active.evm, solana: active.solana };
+      const last = await lastPortfolio(who, s.showTestnets, s.network);
+      if (mine !== asked.current) return;
+      setPortfolio(last?.portfolio ?? null);
+      const fresh = await readPortfolio(who, s.showTestnets, s.network, force);
+      if (mine === asked.current) setPortfolio(fresh);
+    } finally { if (mine === asked.current) setLoading(false); }
   }, [active.evm, active.solana]);
-  useEffect(() => { setPortfolio(null); void load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
   const shown = prefs ? shownNetworks(prefs.showTestnets, prefs.network) : [];
   const holdings = portfolio?.holdings ?? [];
   const byChain = new Map<string, { chain: Holding["chain"]; usd: number }>();
@@ -196,7 +209,7 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
         <NetworkButton selected={prefs?.network ?? "all"} onOpen={() => setPicking(true)} />
         <button type="button" className="icon-btn" aria-label={prefs?.hideBalances ? "Show balances" : "Hide balances"} aria-pressed={!!prefs?.hideBalances}
           onClick={async () => { await settingsStore.write({ hideBalances: !prefs?.hideBalances }); setPrefs(await settingsStore.read()); }}>{prefs?.hideBalances ? <EyeOff size={17} strokeWidth={1.7} /> : <Eye size={17} strokeWidth={1.7} />}</button>
-        <button type="button" className="icon-btn" aria-label="Refresh" onClick={() => void load()}><RefreshCw size={17} strokeWidth={1.7} className={loading ? "spinning" : ""} /></button>
+        <button type="button" className="icon-btn" aria-label="Refresh" onClick={() => void load(true)}><RefreshCw size={17} strokeWidth={1.7} className={loading ? "spinning" : ""} /></button>
       </div>
     </header>
     <div className="scroll">
@@ -213,11 +226,11 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
           <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => go({ name: "change-password" })}>Choose a new password</button>
           <button type="button" className="link-btn" style={{ fontSize: 12, color: "var(--muted)" }} onClick={async () => { await wallet.dismissNewPasswordOffer(); setOfferPassword(false); }}>Keep it</button></span></span></div>}
       {!active.backedUp && <button type="button" className="nudge" onClick={() => go({ name: "export", kind: "phrase" })}><ShieldCheck size={17} /><span><b>Back up your recovery phrase</b>Your only way back in.</span><i>Back up</i></button>}
-      <div className="section-head"><h2>Tokens</h2>{portfolio && <button type="button" onClick={() => void load()}>{portfolio.source === "api" ? "Live from MAXXING" : "Read from the networks"}</button>}</div>
+      <div className="section-head"><h2>Tokens</h2>{portfolio && <button type="button" onClick={() => void load(true)}>{portfolio.source === "api" ? "Live from MAXXING" : "Read from the networks"}</button>}</div>
       {/* Only when every endpoint of some network failed after retries: one quiet line, never a list of network names. */}
       {portfolio?.errors.length ? <div className="stale-note" role="status" data-testid="stale-note">
         <span>Some balances may be out of date</span>
-        <button type="button" className="link-btn" disabled={loading} onClick={() => void load()}>{loading ? "Retrying…" : "Retry"}</button>
+        <button type="button" className="link-btn" disabled={loading} onClick={() => void load(true)}>{loading ? "Retrying…" : "Retry"}</button>
       </div> : null}
       {!prefs ? <SkeletonRows count={4} /> : <AssetList shown={shown} holdings={holdings} prefs={assetChoices} pending={!portfolio} hideBalances={!!prefs?.hideBalances}
         onOpen={h => go({ name: "token", holding: h, all: holdings })} onManage={() => go({ name: "manage-assets" })}
@@ -225,7 +238,7 @@ function HomeView({ snap, active, go, onTab, onChanged, toast }: { snap: wallet.
       {portfolio && holdings.length === 0 && <p className="empty-hint">Nothing held yet. <button type="button" className="link-btn" onClick={() => go({ name: "receive" })}>Receive</button> on any network to see it here.</p>}
     </div>
     {picking && prefs && <NetworkSheet selected={prefs.network} showTestnets={prefs.showTestnets} onClose={() => setPicking(false)}
-      onPick={async networkId => { setPicking(false); await settingsStore.write({ network: networkId }); setPortfolio(null); void load(); }} />}
+      onPick={async networkId => { setPicking(false); await settingsStore.write({ network: networkId }); void load(); }} />}
     <Dock tab="home" onTab={onTab} />
     {rail && <AccountRail snap={snap} onClose={() => setRail(false)} onChanged={onChanged} onManage={() => { setRail(false); setSheet(true); }} onSettings={() => { setRail(false); onTab("settings"); }}
       onAdd={kind => { setRail(false); go({ name: "add", kind }); }}
@@ -314,7 +327,7 @@ function AccountsSheet({ snap, onClose, onChanged, onAdd, onSwitched }: { snap: 
   const [totals, setTotals] = useState<Record<string, number | null | "loading">>({});
   const loadTotal = (a: { evm: string; solana: string }) => {
     setTotals(t => ({ ...t, [a.evm]: "loading" }));
-    void settingsStore.read().then(s => loadPortfolio({ evm: a.evm, solana: a.solana }, s.showTestnets))
+    void settingsStore.read().then(s => readPortfolio({ evm: a.evm, solana: a.solana }, s.showTestnets))
       // A total when everything held has a price (an empty account is $0.00); "—" when something held can't be priced yet.
       .then(p => setTotals(t => ({ ...t, [a.evm]: p.holdings.every(h => h.priced !== false || !h.raw || BigInt(h.raw) === 0n) ? p.totalUsd : null })), () => setTotals(t => ({ ...t, [a.evm]: null })));
   };

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronRight, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { ChainLogo } from "../ui/logos";
 import { Busy, PageHead, message } from "./kit";
-import { networkById, networks, registryHasChain, type Network } from "../lib/chains";
-import { addCustomNetwork, addRpc, checkHealth, preferRpc, removeCustomNetwork, removeRpc, resetRpcs, rpcHost, rpcUrlProblem, type Health } from "../lib/user-networks";
+import { listedNetworks, networkById, networkOff, networks, registryHasChain, type Network } from "../lib/chains";
+import { addCustomNetwork, addRpc, checkHealth, preferRpc, removeCustomNetwork, removeRpc, resetRpcs, rpcHost, rpcUrlProblem, setNetworkOff, type Health } from "../lib/user-networks";
 import { userNetworksNow } from "../lib/user-networks-state";
 import { activity, settings as settingsStore } from "../lib/store";
 
@@ -20,16 +20,17 @@ export function NetworksView({ onBack, onOpen, onAdd }: { onBack: () => void; on
   useEffect(() => { void settingsStore.read().then(s => setTestnets(s.showTestnets)); }, []);
   if (testnets === null) return <div className="popup"><div className="backdrop" /><PageHead title="Networks" onBack={onBack} /><Busy text="Loading…" /></div>;
   const user = userNetworksNow();
-  const list = networks(testnets).filter(n => n.name.toLowerCase().includes(query.trim().toLowerCase()));
+  const list = listedNetworks(testnets).filter(n => n.name.toLowerCase().includes(query.trim().toLowerCase()));
   return <div className="popup"><div className="backdrop" />
     <PageHead title="Networks" onBack={onBack} right={<button type="button" className="chip" onClick={onAdd}><Plus size={14} /> Add</button>} />
     <div className="scroll" data-testid="networks">
       <input className="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search networks" aria-label="Search networks" style={{ marginBottom: 10 }} />
       <div className="card rows">{list.map(n => {
         const own = (user.rpcs[n.networkId]?.length ?? 0) + (n.custom ? n.rpc.length : 0);
-        return <button key={n.networkId} type="button" className="row" style={{ width: "100%", textAlign: "left" }} onClick={() => onOpen(n.networkId)} data-network={n.networkId}>
+        const isOff = networkOff(n.networkId);
+        return <button key={n.networkId} type="button" className="row" style={{ width: "100%", textAlign: "left", opacity: isOff ? .5 : 1 }} onClick={() => onOpen(n.networkId)} data-network={n.networkId} data-off={isOff || undefined}>
           <ChainLogo networkId={n.networkId} name={n.name} size={28} />
-          <div className="main"><b>{n.name}{n.custom && <> <CustomTag network={n} /></>}</b><small>{n.rpc.length} endpoint{n.rpc.length === 1 ? "" : "s"}{own && !n.custom ? ` · ${own} yours` : ""}{user.preferred[n.networkId] ? " · your choice first" : ""}</small></div>
+          <div className="main"><b>{n.name}{n.custom && <> <CustomTag network={n} /></>}{isOff && <> <span className="tag">Off</span></>}</b><small>{n.rpc.length} endpoint{n.rpc.length === 1 ? "" : "s"}{own && !n.custom ? ` · ${own} yours` : ""}{user.preferred[n.networkId] ? " · your choice first" : ""}</small></div>
           <ChevronRight size={16} style={{ color: "var(--dim)" }} />
         </button>;
       })}</div>
@@ -55,6 +56,7 @@ export function NetworkDetail({ networkId, onBack, toast }: { networkId: string;
   const changed = !network.custom && (!!user.rpcs[networkId]?.length || !!user.preferred[networkId]);
   const refresh = () => setVersion(v => v + 1);
   const problem = url ? rpcUrlProblem(url) : null;
+  const off = networkOff(networkId);
   return <div className="popup"><div className="backdrop" />
     <PageHead title={network.name} onBack={onBack} />
     <div className="scroll" data-testid="network-detail">
@@ -62,6 +64,19 @@ export function NetworkDetail({ networkId, onBack, toast }: { networkId: string;
         <ChainLogo networkId={network.networkId} name={network.name} size={32} />
         <div className="main"><b>{network.name}{network.custom && <> <CustomTag network={network} /></>}</b><small>{network.family === "EVM" ? `Chain ID ${network.evmChainId}` : "Solana"} · {network.nativeSymbol} pays the fees</small></div>
       </div>
+      {/* On or off: an off network isn't listed or read anywhere; nothing held there is touched. */}
+      <button type="button" className="card row" role="switch" aria-checked={!off} data-testid="network-on" style={{ width: "100%", textAlign: "left", minHeight: 56, marginBottom: 10 }} onClick={async () => {
+        try {
+          const s = await settingsStore.read();
+          await setNetworkOff(networkId, !off, networks(s.showTestnets).filter(n => n.networkId !== networkId).length);
+          // Home was showing only this network: go back to all of them.
+          if (!off && s.network === networkId) await settingsStore.write({ network: "all" });
+          refresh(); toast(off ? `${network.name} is on` : `${network.name} is off`);
+        } catch (e) { setError(message(e)); }
+      }}>
+        <div className="main"><b>Show this network</b><small>{off ? "Off: not listed, and its balances aren't read." : "On: listed in the wallet, balances read."}</small></div>
+        <span className={`toggle${off ? "" : " on"}`} aria-hidden="true" />
+      </button>
       {network.custom && <div className="alert warn" style={{ marginBottom: 10 }}><AlertTriangle size={16} /><span>You added this network. MAXXING doesn't check it: its endpoint decides what you see. No verified badges, gas-free or swaps here unless Relay lists it.</span></div>}
       <div className="section-head"><h2>Endpoints</h2><span style={{ fontSize: 12, color: "var(--muted)" }}>Tried in this order</span></div>
       <div className="card rows" data-testid="rpc-list">{network.rpc.map((u, i) => {
