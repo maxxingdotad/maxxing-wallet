@@ -850,11 +850,20 @@ button.site-network svg:last-child { color: var(--muted); }
    account wears a ring of it; waiting is an arc of it turning. */
 .liquid-text { position: relative; isolation: isolate; display: inline-block; background: #000; }
 .liquid-text .metal canvas { filter: contrast(.42) brightness(1.9); }
+/* The metal stops just inside the letters' black box, so no hairline of it shows round the edge at odd zoom levels. */
+.liquid-text > .metal, .balance-metal > .metal { inset: 2px; }
 .liquid-text .liquid-ink { position: relative; display: block; padding: 0 6px; background: #000; color: #fff; mix-blend-mode: multiply; }
-.veil.plate { position: absolute; inset: 0; z-index: 1; border-radius: inherit; overflow: hidden; display: grid; place-items: center; background: #0a0a0c;
-  clip-path: inset(0 0 0 calc(var(--held, 0) * 100%)); }
-.veil.plate .metal canvas { filter: brightness(.8); }
-.veil.plate i { position: relative; width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: rgb(0 0 0 / .6); color: #fff; box-shadow: 0 6px 16px rgb(0 0 0 / .5); }
+/* A secret under a field of cells (ui/veil.tsx): quiet, closed-looking; a chip says what a tap does. */
+.sealed { position: relative; }
+.pixel-veil { position: absolute; inset: 0; z-index: 1; border-radius: inherit; overflow: hidden; display: grid; place-items: center; cursor: pointer; }
+.pixel-veil:disabled { opacity: 1; cursor: default; }
+.sealed > .phrase + .pixel-veil { border-radius: 14px; }
+.pixel-veil canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.veil-chip { position: relative; display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 600; color: var(--text);
+  background: #1c1c20; box-shadow: inset 0 1px 0 rgb(255 255 255 / .1), 0 0 0 6px rgb(10 10 12 / .8), 0 8px 18px rgb(0 0 0 / .6); transition: opacity .2s var(--ease), transform .2s var(--ease); }
+.veil-chip svg { color: var(--text-2); }
+.pixel-veil:hover .veil-chip { background: #25252a; }
+.pixel-veil.going .veil-chip { opacity: 0; transform: scale(.94); }
 .btn.primary.hold { --rim: 2.5px; background: radial-gradient(120% 160% at 50% -20%, rgb(255 255 255 / .13), transparent 60%), #0a0a0c; color: #fff; box-shadow: 0 10px 26px rgb(0 0 0 / .6); }
 .hold .metal { position: absolute; }
 .hold .fill { transform: none; transition: none; background: none; clip-path: inset(0 calc((1 - var(--held, 0)) * 100%) 0 0); }

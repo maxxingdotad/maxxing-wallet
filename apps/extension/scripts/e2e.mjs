@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * End-to-end: the built extension (dist/chrome) in a real Chrome, driven over the DevTools protocol the way a person would use it.
- * Onboards a new wallet (password, recovery phrase behind hold-to-reveal, two-word check), adds an account, then a local test site
+ * Onboards a new wallet (password, recovery phrase sealed until tapped, two-word check), adds an account, then a local test site
  * connects over EVM (EIP-6963) and Solana (Wallet Standard) and asks for signatures: a message and a Base Sepolia transaction, a
  * Solana message and a Solana transaction. Every signature is verified here. Screenshots of each screen go to the folder given.
  *
@@ -100,8 +100,8 @@ async function attach(targetId, size) {
   // Past the approve buttons' arming delay (750 ms), so screenshots show them as the user can use them.
   // The tab is brought to the front first (Chrome holds back frames in a background tab, and a capture can wait for one forever);
   // a capture that fails or takes over 15 s is tried again, and one that still fails is noted, never failing the run.
-  const shot = async (name) => {
-    await sleep(1000);
+  const shot = async (name, settle = 1000) => {
+    await sleep(settle); // let the screen come to rest; 0 catches something mid-motion
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         await send("Target.activateTarget", { targetId }).catch(() => {});
@@ -249,15 +249,19 @@ try {
   check("the new wallet is shown: its EVM and Solana addresses decode on the card",revealed.text.includes("Your wallet is ready") && /^0x[0-9a-fA-F]{6}…[0-9a-fA-F]{6}$/.test(revealed.rows[0] ?? "") && /^[1-9A-HJ-NP-Za-km-z]{8}…[1-9A-HJ-NP-Za-km-z]{6}$/.test(revealed.rows[1] ?? ""), JSON.stringify(revealed.rows));
   await popup.shot("03-wallet-ready");
   await popup.click("Back up now");
-  await popup.waitFor(`document.body.innerText.includes("Hold to reveal")`);
+  await popup.waitFor(`document.body.innerText.includes("Tap to reveal")`);
+  await sleep(600);
   await popup.shot("04-phrase-hidden");
-  await popup.evaluate(`document.querySelector(".hold").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`);
-  await sleep(1800);
-  await popup.evaluate(`document.querySelector(".hold")?.dispatchEvent(new PointerEvent("pointerup", { bubbles: true }))`);
-  await popup.waitFor(`!document.querySelector(".phrase.blurred")`);
+  // Sealed: the words are blurred under the field. A tap dissolves the field, and then it is gone.
+  const sealed = await popup.evaluate(`!!document.querySelector(".phrase.blurred") && !!document.querySelector('[data-testid="veil"]')`);
+  await popup.evaluate(`(() => { const v = document.querySelector('[data-testid="veil"]'), r = v.getBoundingClientRect(); v.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1, clientX: r.left + r.width * 0.3, clientY: r.top + r.height * 0.4 })); })()`);
+  await sleep(180);
+  await popup.shot("04b-phrase-dissolving", 0);
+  await popup.waitFor(`!document.querySelector('[data-testid="veil"]') && !document.querySelector(".phrase.blurred")`, 10000);
+  check("the recovery phrase is sealed under its field until tapped, then shown", sealed);
   await popup.shot("05-phrase-shown");
   const words = await popup.evaluate(`[...document.querySelectorAll(".phrase li")].map(li => li.lastChild.textContent.trim())`);
-  check("recovery phrase is 12 words behind hold-to-reveal", words.length === 12);
+  check("recovery phrase is 12 words, sealed until tapped", words.length === 12);
   await popup.click("I wrote them down");
   await popup.waitFor(`document.querySelectorAll(".word-grid input").length === 2`);
   const asked = await popup.evaluate(`[...document.querySelectorAll(".word-grid label")].map(l => Number(l.textContent.match(/#(\\d+)/)[1]) - 1)`);
@@ -658,12 +662,11 @@ try {
   await popup.waitFor(`!!document.querySelector(".pw-form .pw-input")`);
   await popup.shot("16b-export-password");
   await popup.typePassword(PASSWORD);
-  await popup.waitFor(`document.body.innerText.includes("Hold to reveal")`, 30000);
-  await popup.evaluate(`document.querySelector(".hold").dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }))`);
-  await sleep(1800);
-  await popup.waitFor(`document.body.innerText.includes("Hides again in")`);
+  await popup.waitFor(`document.body.innerText.includes("Tap to reveal")`, 30000);
+  await popup.evaluate(`document.querySelector('[data-testid="veil"]').click()`);
+  await popup.waitFor(`document.body.innerText.includes("Hides again in") && !document.querySelector('[data-testid="veil"]')`, 10000);
   await popup.shot("17-export-keys-shown");
-  check("private key export: ticks, password, hold to reveal, auto-hide timer", true);
+  check("private key export: ticks, password, tap to reveal, auto-hide timer", true);
 
   // Copying a key: the background empties the clipboard later, even with the popup closed (alarm + offscreen document).
   await send("Browser.grantPermissions", { origin: base, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] }).catch(() => {});

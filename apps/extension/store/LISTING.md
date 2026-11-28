@@ -26,7 +26,7 @@ device, encrypted with your password. MAXXING never has them.
 - Known scam sites are blocked using a public phishing blocklist. Sites whose names read as MAXXING but aren't maxxing.ad get a warning.
 - One password opens every wallet and account on the device. The wallet locks itself after the time you pick, and when the
   browser starts. Only your password opens it again, and wrong tries wait longer each time.
-- Showing your recovery phrase or private keys takes several steps, with warnings, your password, and press-and-hold to reveal. A copied
+- Showing your recovery phrase or private keys takes several steps, with warnings, your password, and a final tap to reveal. A copied
   secret is cleared from the clipboard after 60 seconds if it's still there.
 - Works as a toolbar popup, in Chrome's side panel, or in a full tab.
 

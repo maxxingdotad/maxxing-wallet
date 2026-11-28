@@ -1,34 +1,36 @@
-import { useEffect, useRef, useState } from "react";
-import { Camera, Check, Clock3, Copy, EyeOff, KeyRound } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Camera, Check, Clock3, Copy, KeyRound } from "lucide-react";
 import { Steps } from "../ui/parts";
-import { Metal } from "../ui/metal";
+import { PixelVeil } from "../ui/veil";
 import { PageHead, PasswordForm, canClearClipboard, copy, message } from "./kit";
 import * as wallet from "../lib/wallet";
 
 const HIDE_AFTER = 60;
 
 /**
- * A secret behind a press-and-hold: blurred until held for 1.5 s, hidden again after 60 s, and a reminder not to screenshot it.
+ * A secret under a field of cells (ui/veil.tsx): a tap dissolves the field from where it was touched; hidden again after 60 s,
+ * with a reminder not to screenshot it. It comes after the password and the three ticks, so one tap is the last step, not the guard.
  * Copy is offered only where the background really clears the clipboard after 60 s (see kit.copy). Used for the recovery phrase and for private keys.
  */
 export function HoldReveal({ title, words, secrets, step, onBack, onDone, doneLabel = "Done" }: {
   title: string; words?: string[]; secrets?: { label: string; value: string }[]; step?: { at: number; of: number };
   onBack: () => void; onDone: () => void; doneLabel?: string;
 }) {
-  const [held, setHeld] = useState(0);
+  // Sealed, then dissolving from where it was tapped (`tap`: which field and where), then shown.
+  const [tap, setTap] = useState<{ id: string; at: { x: number; y: number } } | null>(null);
+  const [shown, setShown] = useState(false);
   const [left, setLeft] = useState(HIDE_AFTER);
   const [copied, setCopied] = useState("");
-  const timer = useRef<number | null>(null);
-  const shown = held >= 1;
+  const hide = () => { setShown(false); setTap(null); };
   useEffect(() => {
     if (!shown) return;
     setLeft(HIDE_AFTER);
-    const t = setInterval(() => setLeft(s => { if (s <= 1) { setHeld(0); return HIDE_AFTER; } return s - 1; }), 1000);
+    const t = setInterval(() => setLeft(s => { if (s <= 1) { hide(); return HIDE_AFTER; } return s - 1; }), 1000);
     return () => clearInterval(t);
   }, [shown]);
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); }, []);
-  const start = () => { const t0 = Date.now(); timer.current = window.setInterval(() => { const v = Math.min(1, (Date.now() - t0) / 1500); setHeld(v); if (v >= 1 && timer.current) clearInterval(timer.current); }, 30); };
-  const stop = () => { if (timer.current) clearInterval(timer.current); setHeld(h => h >= 1 ? 1 : 0); };
+  // The field over one secret: the one that was tapped dissolves from the touch, any other from its centre, all together.
+  const veil = (id: string) => !shown && <PixelVeil dissolving={tap ? (tap.id === id ? { at: tap.at } : {}) : null} onTap={at => setTap({ id, at })} onDone={() => setShown(true)} />;
+  const open = shown || !!tap; // the words sharpen as the field starts to go, so they show through it
   const doCopy = async (label: string, value: string) => { await copy(value, HIDE_AFTER); setCopied(label); setTimeout(() => setCopied(""), 2000); };
   const copyable = canClearClipboard();
   return <div className="popup"><div className="backdrop" />
@@ -36,23 +38,19 @@ export function HoldReveal({ title, words, secrets, step, onBack, onDone, doneLa
     <div className="scroll" style={{ paddingBottom: 150 }}>
       {step && <Steps at={step.at} of={step.of} />}
       <div className="alert warn" style={{ margin: "12px 0" }}><Camera size={16} /><span><b>No screenshots.</b> Write it on paper and keep it offline. MAXXING will never ask for it.</span></div>
-      {words && <ol className={`phrase${shown ? "" : " blurred"}`} style={{ margin: 0 }}>
-        {words.map((w, i) => <li key={i}><small>{i + 1}</small>{w}</li>)}
-        {/* Hidden under a plate of liquid metal; holding the button pours it off, left to right. */}
-        {!shown && <div className="veil plate" style={{ ["--held" as string]: held }}><Metal fill /><i><EyeOff size={20} /></i></div>}
-      </ol>}
+      {words && <div className="sealed">
+        <ol className={`phrase${open ? "" : " blurred"}`} style={{ margin: 0 }}>{words.map((w, i) => <li key={i}><small>{i + 1}</small>{w}</li>)}</ol>
+        {veil("phrase")}
+      </div>}
       {secrets?.map(s => <div key={s.label} style={{ marginBottom: 10 }}>
         <div className="section-head" style={{ marginTop: 4 }}><h2>{s.label}</h2>{shown && copyable && <button type="button" onClick={() => doCopy(s.label, s.value)}>{copied === s.label ? "Copied · clears in 60s" : "Copy"}</button>}</div>
-        <div className="card" style={{ padding: 12, position: "relative" }}><div className="addr" style={{ filter: shown ? "none" : "blur(6px)", userSelect: shown ? "text" : "none" }}>{s.value}</div>
-          {!shown && <div className="veil plate" style={{ ["--held" as string]: held }}><Metal fill /><i><EyeOff size={18} /></i></div>}</div>
+        <div className="card sealed" style={{ padding: 12 }}><div className="addr" style={{ filter: open ? "none" : "blur(6px)", userSelect: shown ? "text" : "none" }}>{s.value}</div>{veil(s.label)}</div>
       </div>)}
-      {shown && <div className="timer"><Clock3 size={13} /> Hides again in {left}s · <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={() => setHeld(0)}>Hide now</button></div>}
+      {shown && <div className="timer"><Clock3 size={13} /> Hides again in {left}s · <button type="button" className="link-btn" style={{ fontSize: 12 }} onClick={hide}>Hide now</button></div>}
     </div>
-    <div className={shown ? "footer" : "footer glow-panel"} style={shown ? { position: "absolute", left: 0, right: 0, bottom: 0 } : undefined}>
-      {shown
-        ? <>{words && copyable && <button type="button" className="btn secondary" onClick={() => doCopy("phrase", words.join(" "))}><Copy size={16} />{copied ? "Copied · clears in 60s" : "Copy (clears in 60s)"}</button>}<button type="button" className="btn primary" onClick={onDone}>{doneLabel}</button></>
-        : <button type="button" className="btn primary hold" style={{ ["--held" as string]: held }} onPointerDown={start} onPointerUp={stop} onPointerLeave={stop} onKeyDown={e => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); if (!timer.current) start(); } }} onKeyUp={() => { stop(); timer.current = null; }}><span className="fill"><Metal fill /></span><Metal /><span className="hold-label">Hold to reveal</span></button>}
-    </div>
+    {shown && <div className="footer" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
+      {words && copyable && <button type="button" className="btn secondary" onClick={() => doCopy("phrase", words.join(" "))}><Copy size={16} />{copied ? "Copied · clears in 60s" : "Copy (clears in 60s)"}</button>}<button type="button" className="btn primary" onClick={onDone}>{doneLabel}</button>
+    </div>}
   </div>;
 }
 
@@ -61,7 +59,7 @@ const CHECKS = {
   keys: ["Anyone with these keys can take everything in this account.", "MAXXING will never ask for them: not support, not an email, not a site.", "I'm alone, and no one can see my screen."],
 };
 
-/** Exporting the recovery phrase or the private keys: warning and three ticks, then the PIN, then the hold-to-reveal. Logged locally. */
+/** Exporting the recovery phrase or the private keys: warning and three ticks, then the password, then a tap on the sealed field. Logged locally. */
 export function ExportFlow({ kind, onClose }: { kind: "phrase" | "keys"; onClose: () => void }) {
   const [step, setStep] = useState<"warn" | "pin" | "show">("warn");
   const [ticks, setTicks] = useState([false, false, false]);
