@@ -132,12 +132,12 @@ export function Dock({ tab, onTab }: { tab: DockTab; onTab?: (tab: DockTab) => v
     { id: "settings", label: "Settings", icon: <Settings size={21} strokeWidth={1.7} /> },
   ];
   const index = tabs.findIndex(t => t.id === tab);
-  // Each screen draws its own dock, so the pill starts where the last one left it and slides to this screen's tab.
+  // Each screen draws its own dock, so the light starts where the last one left it and slides to this screen's tab.
   const [at, setAt] = useState(lastDockIndex);
   useEffect(() => { lastDockIndex = index; const frame = requestAnimationFrame(() => setAt(index)); return () => cancelAnimationFrame(frame); }, [index]);
   return <nav className="dock" aria-label="Wallet" style={{ ["--glow" as string]: `${(index - 1.5) * 100}%`, ["--at" as string]: at }}>
     <Metal className="dock-rim" />
-    <span className="dock-thumb" aria-hidden="true"><Metal /></span>
+    <span className="dock-thumb" aria-hidden="true" />
     {tabs.map(t => <button key={t.id} type="button" className={`tab${t.id === tab ? " on" : ""}`} aria-label={t.label} aria-current={t.id === tab ? "page" : undefined} onClick={() => onTab?.(t.id)}>
       {t.id === "home" ? <img src="/brand/cap-neutral.webp" alt="" /> : t.icon}
     </button>)}

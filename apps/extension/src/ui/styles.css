@@ -796,12 +796,15 @@ button.site-network svg:last-child { color: var(--muted); }
 .asset-field .chev { color: var(--muted); flex-shrink: 0; }
 
 /* ── Liquid metal on the controls that carry the wallet ─────────────────────────────────────────────────────────────────
-   The dock's edge and its lit tab, the hold-to-confirm button, and the token chart's chosen range are rimmed in the flowing
+   The dock's edge, the hold-to-confirm button, and the token chart's chosen range are rimmed in the flowing
    chrome of ui/metal.tsx. Ordinary main buttons are a still bar of the same polished steel. Nothing else wears it. */
 .dock::before { content: none; }
 .dock .dock-rim { --rim: 2px; opacity: .9; z-index: 0; }
-.dock-thumb { --rim: 2px; background: radial-gradient(120% 140% at 50% 0%, rgb(255 255 255 / .16), rgb(255 255 255 / .03) 60%), #0a0a0c;
-  box-shadow: 0 6px 16px rgb(0 0 0 / .6), inset 0 1px 0 rgb(255 255 255 / .12); }
+/* The open tab is the icon and a soft light rising under it, the same as the mobile app's tab bar: no ring inside the dock,
+   the metal edge belongs to the dock alone. */
+.dock-thumb { top: 0; height: 100%; border-radius: 0; background: none; box-shadow: none; }
+.dock-thumb::after { content: ""; position: absolute; inset: 0 -70%; pointer-events: none;
+  background: radial-gradient(49% 92% at 50% 92%, rgb(220 225 234 / .26), rgb(220 225 234 / .08) 48%, transparent); }
 .btn.primary, .brand-actions .btn.primary, .unlock .pw-form .btn.primary {
   background: linear-gradient(180deg, #ffffff 0%, #f2f4f8 40%, #d6dae3 56%, #edf0f5 74%, #ffffff 100%); color: #0b0b0d;
   box-shadow: inset 0 1px 0 #fff, inset 0 -1px 0 rgb(0 0 0 / .28), 0 8px 20px rgb(0 0 0 / .45); }
