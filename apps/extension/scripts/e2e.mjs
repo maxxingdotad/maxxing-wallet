@@ -448,6 +448,14 @@ try {
   await popup.shot("08c2-unlock-wrong-and-forgot");
   const forgot = await popup.evaluate(`document.querySelector('[data-testid="forgot-password"]').innerText`);
   check("a wrong password shows under the field; Forgot explains the phrase, warning about the wallet not backed up", /only protects MAXXING Wallet on this device/.test(forgot) && /isn't backed up/.test(forgot), forgot.slice(0, 200));
+  // Forgot password leads to starting over with the recovery phrase: it names what is erased, and nothing happens until a box is ticked.
+  await popup.click("Start over with recovery phrase");
+  await popup.waitFor(`!!document.querySelector('[data-testid="start-over"]')`);
+  await popup.shot("08c3-start-over");
+  const startOver = await popup.evaluate(`(() => { const s = document.querySelector('[data-testid="start-over"]'); return { text: s.innerText, off: [...s.querySelectorAll("button")].find(b => b.textContent === "Continue").disabled }; })()`);
+  check("Start over names every wallet, warns about the one not backed up, and waits for the box to be ticked", /Every wallet on this device is erased/.test(startOver.text) && /Not backed up/.test(startOver.text) && startOver.off, startOver.text.slice(0, 200));
+  await popup.click("Keep trying my password");
+  await popup.waitFor(`!!document.querySelector('[data-testid="unlock"]')`);
   await popup.typePassword(PASSWORD);
   await popup.waitFor(`!!document.querySelector('[aria-label="Home"]')`, 30000);
   await popup.evaluate(`document.querySelector('[aria-label="Home"]').click()`);

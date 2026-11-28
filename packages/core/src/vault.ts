@@ -156,8 +156,16 @@ function attempts(id: string): Attempts {
   } catch { /* treat as none */ }
   return { failures: 0, waitUntil: 0 };
 }
+/**
+ * Whether wrong tries make the next one wait. On for a short PIN (the web wallet's six digits). A surface whose secret is a
+ * full password under strength rules (the extension) turns it off, as browser wallets do: every try already costs the key
+ * derivation, and someone who can script tries on this device can copy the sealed wallet and guess without any wait.
+ */
+let wrongTryWaits = true;
+export function useWrongTryWaits(on: boolean) { wrongTryWaits = on; }
 /** When the next PIN try is allowed for this wallet (0 when now). */
 export function pinWaitUntil(id?: string) {
+  if (!wrongTryWaits) return 0;
   try { const w = attempts(id ?? (keyringMode && readKeyring() ? KEYRING_ID : current().id)).waitUntil; return w > Date.now() ? w : 0; } catch { return 0; }
 }
 /** 30 seconds after the 5th wrong PIN, then twice as long each time, up to an hour. */
@@ -166,6 +174,7 @@ export function waitAfter(failures: number) {
   return Math.min(MAX_WAIT_MS, FIRST_WAIT_MS * 2 ** (failures - FREE_TRIES));
 }
 function assertMayTry(id: string) {
+  if (!wrongTryWaits) return;
   const wait = attempts(id).waitUntil - Date.now();
   if (wait > 0) throw Object.assign(new Error(`Too many wrong PINs. Try again in ${formatWait(wait)}.`), { code: "PIN_WAIT", waitUntil: Date.now() + wait });
 }
@@ -242,7 +251,7 @@ async function dataKeyFromRingSession(a: SavedAccount) {
   try { return await unwrapRing(a, master); } catch { return null; } finally { master.fill(0); }
 }
 function countWrongTry(id: string) {
-  const failures = attempts(id).failures + 1, wait = waitAfter(failures);
+  const failures = attempts(id).failures + 1, wait = wrongTryWaits ? waitAfter(failures) : 0;
   store().setItem(ATTEMPTS_PREFIX + id, JSON.stringify({ failures, waitUntil: wait ? Date.now() + wait : 0 } satisfies Attempts));
   return Object.assign(new Error(wait ? `Wrong PIN. Try again in ${formatWait(wait)}.` : "Wrong PIN."), { code: wait ? "PIN_WAIT" : "PIN_WRONG", waitUntil: wait ? Date.now() + wait : 0 });
 }
@@ -531,6 +540,34 @@ export async function importPlatformWallet(mnemonic: string, pin?: string, label
   if (pin != null || !keyringMode) checkedPin(pin ?? "");
   if (!mnemonicIsValid(mnemonic)) throw new Error("Check the words and their order.");
   return saveNew(derivePlatformAccount(normalizeMnemonic(mnemonic)), pin, label, true);
+}
+/**
+ * Starting over after a forgotten password (keyring mode): every wallet on this device is erased, the given recovery phrase is
+ * restored as the only wallet, and `newPin` becomes the one password. No password is asked, because none is known; removing
+ * the app from the browser does the same erasing. The phrase and the new password are checked BEFORE anything is erased, so a
+ * mistyped phrase never costs the wallets that are here. Wallets not restored by this phrase are gone from this device: the
+ * screen warns about them first.
+ */
+export async function startOverWithPhrase(mnemonic: string, newPin: string, label = "My wallet") {
+  if (!keyringMode) throw new Error("NO_KEYRING");
+  checkedPin(newPin);
+  if (!mnemonicIsValid(mnemonic)) throw new Error("Check the words and their order.");
+  await mutate(async () => {
+    let old: SavedAccount[] = [];
+    try { old = read().accounts; } catch { /* damaged storage is erased like the rest */ }
+    epoch++; sessionEpoch++;
+    dispose(unlocked); unlocked = null;
+    for (const a of old) {
+      store().removeItem(ATTEMPTS_PREFIX + a.id);
+      if (a.passkey) forgetPasskeyCredential(a.passkey.credential);
+      unpublish(selectedOf(a));
+    }
+    await forgetAllDeviceSessions();
+    persist({ version: 3, activeId: null, accounts: [] });
+    store().removeItem(KEYRING_KEY);
+    store().removeItem(ATTEMPTS_PREFIX + KEYRING_ID);
+  });
+  return importPlatformWallet(mnemonic, newPin, label);
 }
 /** Public addresses for a phrase, without saving or opening anything. */
 export function previewPlatformPhrase(mnemonic: string): PublicRecord {

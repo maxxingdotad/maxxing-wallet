@@ -45,6 +45,7 @@ export async function start(): Promise<WalletSnapshot> {
     started = true;
     vault.setWalletPublishing(false);
     vault.useKeyring(true); // one password for the whole extension: every wallet and account sits behind it
+    vault.useWrongTryWaits(false); // a full password, not a short PIN: a wrong try says so and the next one is allowed at once
     vault.startWalletProtection();
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area === "session" && changes.lockedAt?.newValue) void vault.signOutPlatformWallet().then(() => window.dispatchEvent(new Event("maxxing:wallet")));
@@ -75,6 +76,13 @@ export const dismissNewPasswordOffer = () => kept.set("offer-new-password", fals
 export async function create(pin?: string, label?: string) { await vault.createPlatformWallet(pin, label); await opened("create"); }
 export async function restore(phrase: string, pin?: string, label?: string) { await vault.importPlatformWallet(phrase, pin, label); await opened("import"); }
 /** The password is set on this device (so adding a wallet needs no new PIN). */
+/** Forgot the password: erases the wallets on this device and restores the phrase's wallet behind a new password (see the vault). */
+export async function startOver(phrase: string, newPassword: string, label?: string) {
+  await vault.startOverWithPhrase(phrase, newPassword, label);
+  await kept.set("offer-new-password", false);
+  await opened("import");
+  await activity.add({ kind: "unlock", text: "Started over with a recovery phrase" });
+}
 export const passwordSet = () => vault.keyringExists();
 /** Whether the password was entered in this browser session (the extension is unlocked). */
 export const passwordOpen = () => vault.keyringOpen();

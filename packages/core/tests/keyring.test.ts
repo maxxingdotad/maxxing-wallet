@@ -40,6 +40,30 @@ test("keyring: one password for every wallet on a fresh device", async () => {
   assert.deepEqual([first.evm, second.evm, third.evm].map(e => e.toLowerCase()).sort(), saved.map(w => w.evm.toLowerCase()).sort());
 });
 
+test("keyring: starting over erases every wallet, restores the phrase behind a new password, and checks the phrase first", async () => {
+  await reset();
+  vault.useKeyring(true);
+  const phrase = "test test test test test test test test test test test junk";
+  await vault.createPlatformWallet("246810", "A");
+  const kept = await vault.importPlatformWallet(phrase, undefined, "Kept");
+  await vault.signOutPlatformWallet();
+  // A bad phrase or a bad new password changes nothing: both wallets are still here behind the old password.
+  await assert.rejects(vault.startOverWithPhrase("not a real phrase at all", "135791"), /Check the words/);
+  await assert.rejects(vault.startOverWithPhrase(phrase, "12"), /./);
+  assert.equal(vault.savedPlatformWallets().length, 2);
+  await vault.unlockPlatformWallet("246810");
+  await vault.signOutPlatformWallet();
+  // The real thing, with the password forgotten: one wallet left, the phrase's, open, behind the new password only.
+  const back = await vault.startOverWithPhrase(phrase, "135791", "Kept");
+  assert.equal(back.evm.toLowerCase(), kept.evm.toLowerCase());
+  assert.deepEqual(vault.savedPlatformWallets().map(w => w.label), ["Kept"]);
+  assert.equal(vault.platformWalletUnlocked(), true);
+  await vault.signOutPlatformWallet();
+  await assert.rejects(vault.unlockPlatformWallet("246810"), /Wrong PIN/);
+  await vault.unlockPlatformWallet("135791");
+  assert.equal(await vault.revealPlatformMnemonic("135791"), phrase);
+});
+
 test("keyring: wrong passwords count for the whole keyring, and changing the password keeps every wallet", async () => {
   await reset();
   vault.useKeyring(true);
@@ -50,6 +74,13 @@ test("keyring: wrong passwords count for the whole keyring, and changing the pas
   await assert.rejects(vault.unlockPlatformWallet("111111"), /Try again in 30 seconds/);
   assert.ok(vault.pinWaitUntil() > Date.now(), "the wait applies to the keyring");
   await assert.rejects(vault.unlockPlatformWallet("246810"), /Too many wrong PINs/);
+  // A surface with a full password turns the waits off: the wait already counting stops applying, and wrong tries add none.
+  vault.useWrongTryWaits(false);
+  try {
+    assert.equal(vault.pinWaitUntil(), 0);
+    for (let i = 0; i < 8; i++) await assert.rejects(vault.unlockPlatformWallet("111111"), /^Error: Wrong PIN\.$/);
+    assert.equal(vault.pinWaitUntil(), 0);
+  } finally { vault.useWrongTryWaits(true); }
   data.delete("maxxing.wallet.attempts.keyring"); // the wait is over
   await vault.unlockPlatformWallet("246810");
   await vault.changePlatformPin("246810", "135791");

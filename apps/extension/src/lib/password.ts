@@ -1,7 +1,7 @@
 /**
  * The rules for the one password, applied where it's chosen (first run, change). At least 8 characters, or at least 6 if it's
  * digits only; at most 128. The ones people guess first are refused with a plain reason: one character repeated, a straight run of
- * digits, a repeated short pattern, and the most used codes and words. Wrong tries also wait longer each time (wallet core).
+ * digits, a repeated short pattern, and the most used codes and words. A wrong try never makes the next one wait.
  */
 export const PASSWORD_RULE = "At least 8 characters, or 6 or more digits. Avoid runs, repeats and dates.";
 

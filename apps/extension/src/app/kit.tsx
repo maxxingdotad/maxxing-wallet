@@ -37,8 +37,8 @@ export function PasswordField({ value, onChange, label, autoFocus, autoComplete 
 }
 
 /**
- * Asks for the password: one field, a full-width button (Enter works too), errors under the field. After repeated wrong tries the
- * wallet core makes the next try wait; this shows "Try again in 30 s" counting down, and the button waits with it.
+ * Asks for the password: one field, a full-width button (Enter works too), errors under the field. The extension's password has no
+ * wait after wrong tries; a wallet still behind its old PIN (`waitUntil` given) shows that PIN's wait counting down.
  */
 export function PasswordForm({ title, subtitle, error, waitUntil = 0, submitLabel = "Continue", label = "Password", onComplete }: {
   title?: string; subtitle?: string; error?: string; waitUntil?: number; submitLabel?: string; label?: string; onComplete: (password: string) => Promise<void> | void;

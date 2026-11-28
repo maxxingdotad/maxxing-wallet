@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowDownLeft, ArrowLeftRight, ArrowUpRight, Check, Chev
 import { ActionDisc, Avatar, ChainDot, Dock, Orbit, TokenMark, short, usd, type Account, type DockTab, type Holding } from "../ui/parts";
 import { Busy, PageHead, PasswordForm, copy, message, useEscape, useToast } from "./kit";
 import { Onboarding } from "./Onboarding";
+import { StartOver } from "./StartOver";
 import { BrandCap, BrandMark } from "../ui/screens/Welcome";
 import { Metal } from "../ui/metal";
 import { ExportFlow } from "./Export";
@@ -54,6 +55,8 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
   const [view, setView] = useState<View>({ name: "home" });
   // Onboarding stays on screen until the user finishes it (backup included), even though the wallet exists from its second step.
   const [onboarding, setOnboarding] = useState(false);
+  // "Forgot password?" on the lock screen leads here: starting over with a recovery phrase.
+  const [startingOver, setStartingOver] = useState(false);
   const [toast, showToast] = useToast();
   const refresh = useCallback(() => setSnap(wallet.snapshot()), []);
   useEffect(() => {
@@ -71,7 +74,8 @@ export function App({ mode }: { mode: "popup" | "panel" | "tab" }) {
   const oldOnes = wallet.needingOldPin();
   if (!snap.unlocked && oldOnes.some(w => w.id === snap.activeId)) return frame(<OldWallet wallet={oldOnes.find(w => w.id === snap.activeId)!} others={oldOnes.length - 1} onDone={refresh} />);
   if (view.name === "old-wallets" && oldOnes.length) return frame(<OldWallet wallet={oldOnes[0]!} others={oldOnes.length - 1} onDone={() => { refresh(); if (oldOnes.length <= 1) setView({ name: "home" }); }} onBack={() => setView({ name: "home" })} />);
-  if (!snap.unlocked) return frame(<Unlock snap={snap} onOpen={refresh} onImport={() => setView({ name: "add", kind: "import" })} />);
+  if (!snap.unlocked && startingOver) return frame(<StartOver snap={snap} onBack={() => setStartingOver(false)} onDone={() => { setStartingOver(false); setView({ name: "home" }); refresh(); }} />);
+  if (!snap.unlocked) return frame(<Unlock snap={snap} onOpen={refresh} onImport={() => setView({ name: "add", kind: "import" })} onStartOver={() => setStartingOver(true)} />);
   const active = snap.accounts.find(a => a.id === snap.activeId)!;
   const go = (next: View) => setView(next);
   const onTab = (tab: DockTab) => go(tab === "home" ? { name: "home" } : tab === "swap" ? { name: "swap" } : tab === "activity" ? { name: "activity" } : { name: "settings" });
@@ -110,11 +114,11 @@ function SkeletonRows({ count }: { count: number }) {
 }
 
 /**
- * The lock screen: the MAXXING hat, one password field, Unlock. Wrong tries show under the field, and the growing wait counts down.
+ * The lock screen: the MAXXING hat, one password field, Unlock. A wrong try shows under the field and the next can be made at once.
  * "Forgot password" explains that the password only protects this device and that starting over means restoring with the
  * recovery phrase, warning first about any wallet that isn't backed up.
  */
-function Unlock({ snap, onOpen, onImport }: { snap: wallet.WalletSnapshot; onOpen: () => void; onImport: () => void }) {
+function Unlock({ snap, onOpen, onImport, onStartOver }: { snap: wallet.WalletSnapshot; onOpen: () => void; onImport: () => void; onStartOver: () => void }) {
   const [error, setError] = useState(""), [waitUntil, setWaitUntil] = useState(wallet.pinWaitUntil());
   const [forgot, setForgot] = useState(false);
   const notBackedUp = snap.accounts.filter(a => !a.backedUp);
@@ -132,8 +136,10 @@ function Unlock({ snap, onOpen, onImport }: { snap: wallet.WalletSnapshot; onOpe
         {notBackedUp.length > 0 && <div className="alert danger" style={{ marginBottom: 10 }}><AlertTriangle size={16} /><span>
           <b>{notBackedUp.length === 1 ? `${notBackedUp[0]!.label} isn't backed up.` : `${notBackedUp.length} wallets aren't backed up.`}</b> Starting over without {notBackedUp.length === 1 ? "its" : "their"} recovery phrase loses {notBackedUp.length === 1 ? "it" : "them"} for good. Keep trying to remember your password first.</span></div>}
         <p>Your password only protects MAXXING Wallet on this device. MAXXING never has it, so it can't be reset or sent to you.</p>
-        <p>To start over, remove MAXXING Wallet from the browser, add it again, and restore each wallet with its recovery phrase. Your funds stay on the blockchain; the phrase brings them back.</p>
-        {!wallet.passwordSet() && <button type="button" className="link-btn" style={{ fontSize: 12.5 }} onClick={onImport}>Restore with a recovery phrase</button>}
+        <p>To get back in, start over with your recovery phrase: the wallets on this device are erased, the phrase brings its wallet back, and you choose a new password. Your funds stay on the blockchain.</p>
+        {wallet.passwordSet()
+          ? <button type="button" className="btn secondary" data-testid="start-over-open" onClick={onStartOver}>Start over with recovery phrase</button>
+          : <button type="button" className="link-btn" style={{ fontSize: 12.5 }} onClick={onImport}>Restore with a recovery phrase</button>}
       </div>}
     </div>
   </div>;
